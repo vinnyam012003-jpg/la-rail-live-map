@@ -108,6 +108,26 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === '/favicon.png' || url.pathname === '/favicon.ico') {
+      const favicon = await readFile(join(root, 'favicon.png'));
+      response.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=86400'
+      });
+      response.end(favicon);
+      return;
+    }
+
+    if (url.pathname === '/icon-192.png' || url.pathname === '/icon-180.png' || url.pathname === '/icon-32.png') {
+      const icon = await readFile(join(root, url.pathname.slice(1)));
+      response.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'public, max-age=86400'
+      });
+      response.end(icon);
+      return;
+    }
+
     response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     response.end('Not found');
   } catch (error) {
