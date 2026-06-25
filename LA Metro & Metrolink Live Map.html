@@ -343,12 +343,11 @@
       return destinations[routeId]?.[Number(directionId)] || 'Direction ' + (Number(directionId) + 1);
     }
 
-    function destinationForTrain(vehicle) {
-      if (vehicle.destination) return vehicle.destination;
-
-      const routeId = String(vehicle.routeId || '').trim();
-      const direction = String(vehicle.direction || '').trim();
-      const normalizedDirection = direction.toLowerCase()
+    function normalizeTrainDirection(value) {
+      return String(value || '').trim().toLowerCase()
+        .replace(/^direction\s*:\s*/i, '')
+        .replace(/^0$/, 'outbound')
+        .replace(/^1$/, 'inbound')
         .replace(/^nb$/, 'north')
         .replace(/^sb$/, 'south')
         .replace(/^eb$/, 'east')
@@ -363,51 +362,111 @@
         .replace(/^e$/, 'east')
         .replace(/^w$/, 'west')
         .trim();
+    }
+
+    function isDirectionOnly(value) {
+      return /^(north|south|east|west|northbound|southbound|eastbound|westbound|nb|sb|eb|wb|n\/b|s\/b|e\/b|w\/b|n|s|e|w|inbound|outbound|0|1)$/i
+        .test(String(value || '').trim());
+    }
+
+    function metrolinkTerminals() {
+      return {
+        av: {
+          north: 'Lancaster', east: 'Lancaster', outbound: 'Lancaster',
+          south: 'L.A. Union Station', west: 'L.A. Union Station', inbound: 'L.A. Union Station'
+        },
+        vc: {
+          west: 'Ventura - East', north: 'Ventura - East', outbound: 'Ventura - East',
+          east: 'L.A. Union Station', south: 'L.A. Union Station', inbound: 'L.A. Union Station'
+        },
+        sb: {
+          east: 'Redlands - University', north: 'Redlands - University', outbound: 'Redlands - University',
+          west: 'L.A. Union Station', south: 'L.A. Union Station', inbound: 'L.A. Union Station'
+        },
+        riv: {
+          east: 'Riverside - Downtown', south: 'Riverside - Downtown', outbound: 'Riverside - Downtown',
+          west: 'L.A. Union Station', north: 'L.A. Union Station', inbound: 'L.A. Union Station'
+        },
+        oc: {
+          south: 'Oceanside', east: 'Oceanside', outbound: 'Oceanside',
+          north: 'L.A. Union Station', west: 'L.A. Union Station', inbound: 'L.A. Union Station'
+        },
+        ieoc: {
+          south: 'Oceanside', west: 'Oceanside', outbound: 'Oceanside',
+          north: 'San Bernardino - Downtown', east: 'San Bernardino - Downtown', inbound: 'San Bernardino - Downtown'
+        },
+        pv91: {
+          east: 'Perris - South', south: 'Perris - South', outbound: 'Perris - South',
+          west: 'L.A. Union Station', north: 'L.A. Union Station', inbound: 'L.A. Union Station'
+        },
+        pacsurf: {
+          south: 'San Diego', east: 'San Diego',
+          north: 'San Luis Obispo / Goleta', west: 'San Luis Obispo / Goleta'
+        }
+      };
+    }
+
+    function metrolinkTerminalKey(routeId, vehicle) {
+      const line = String(routeId || '').toUpperCase()
+        .replace(/&/g, ' AND ')
+        .replace(/[-_/]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (/\bAV\b|ANTELOPE/.test(line)) return 'av';
+      if (/\bVC\b|VENTURA/.test(line)) return 'vc';
+      if (/\bIE\s*OC\b|INLAND EMPIRE|ORANGE COUNTY.*INLAND|IEOC/.test(line)) return 'ieoc';
+      if (/\b91\b|PERRIS/.test(line)) return 'pv91';
+      if (/\bRIV\b|RIVERSIDE/.test(line)) return 'riv';
+      if (/\bOC\b|ORANGE COUNTY/.test(line)) return 'oc';
+      if (/\bSB\b|SAN BERNARDINO/.test(line)) return 'sb';
+      if (/PAC\s*SURF|PACIFIC SURFLINER|AMTRAK/.test(line)) return 'pacsurf';
+
+      const trainNumber = Number(String(vehicle.label || vehicle.id || '').match(/\d+/)?.[0]);
+      if (!Number.isFinite(trainNumber)) return '';
+      if (trainNumber >= 100 && trainNumber < 200) return 'vc';
+      if (trainNumber >= 200 && trainNumber < 300) return 'av';
+      if (trainNumber >= 300 && trainNumber < 400) return 'sb';
+      if (trainNumber >= 400 && trainNumber < 500) return 'riv';
+      if (trainNumber >= 600 && trainNumber < 700) return 'oc';
+      if (trainNumber >= 700 && trainNumber < 800) return 'pv91';
+      if (trainNumber >= 800 && trainNumber < 900) return 'ieoc';
+      return '';
+    }
+
+    function destinationForTrain(vehicle) {
+      const routeId = String(vehicle.routeId || '').trim();
+      const rawDestination = String(vehicle.destination || '').trim();
+      const rawDirection = String(vehicle.direction || '').trim();
+      const direction = rawDirection || (isDirectionOnly(rawDestination) ? rawDestination : '');
+      const normalizedDirection = normalizeTrainDirection(direction);
+
+      if (rawDestination && !isDirectionOnly(rawDestination)) return rawDestination;
 
       if (vehicle.agency === 'metro' && direction !== '') {
         return metroDestination(routeId, direction);
       }
 
       if (vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak') {
-        const line = routeId.toUpperCase()
-          .replace(/&/g, ' AND ')
-          .replace(/[-_/]+/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
         const compass = normalizedDirection;
-        const terminals = {
-          av: { north: 'Lancaster', south: 'L.A. Union Station' },
-          vc: { west: 'Ventura - East', east: 'L.A. Union Station' },
-          sb: { east: 'Redlands - University', west: 'L.A. Union Station' },
-          riv: { east: 'Riverside - Downtown', west: 'L.A. Union Station' },
-          oc: { south: 'Oceanside', north: 'L.A. Union Station' },
-          ieoc: { south: 'Oceanside', north: 'San Bernardino - Downtown' },
-          pv91: { east: 'Perris - South', west: 'L.A. Union Station' },
-          pacsurf: { south: 'San Diego', north: 'San Luis Obispo / Goleta' }
-        };
-
-        let terminalKey = '';
-        if (/\bAV\b|ANTELOPE/.test(line)) terminalKey = 'av';
-        else if (/\bVC\b|VENTURA/.test(line)) terminalKey = 'vc';
-        else if (/\bSB\b|SAN BERNARDINO/.test(line)) terminalKey = 'sb';
-        else if (/\bRIV\b|RIVERSIDE/.test(line)) terminalKey = 'riv';
-        else if (/\bIE\s*OC\b|INLAND EMPIRE|ORANGE COUNTY.*INLAND|IEOC/.test(line)) terminalKey = 'ieoc';
-        else if (/\b91\b|PERRIS/.test(line)) terminalKey = 'pv91';
-        else if (/\bOC\b|ORANGE COUNTY/.test(line)) terminalKey = 'oc';
-        else if (/PAC\s*SURF|PACIFIC SURFLINER|AMTRAK/.test(line)) terminalKey = 'pacsurf';
+        const terminals = metrolinkTerminals();
+        const terminalKey = metrolinkTerminalKey(routeId, vehicle);
 
         if (terminalKey && terminals[terminalKey][compass]) return terminals[terminalKey][compass];
 
         // The live Metrolink feed sometimes omits/varies the direction text.
-        // For AV Line trains, infer the endpoint from the train number when possible:
+        // Infer the endpoint from the train number when possible:
         // odd-numbered trains generally travel away from L.A.; even-numbered trains generally travel toward L.A.
         const trainNumber = Number(String(vehicle.label || vehicle.id || '').match(/\d+/)?.[0]);
-        if (terminalKey === 'av' && Number.isFinite(trainNumber)) {
-          return trainNumber % 2 === 1 ? 'Lancaster' : 'L.A. Union Station';
+        if (terminalKey && Number.isFinite(trainNumber) && terminalKey !== 'ieoc' && terminalKey !== 'pacsurf') {
+          const oddOutboundTerminal = terminals[terminalKey].outbound;
+          const evenInboundTerminal = terminals[terminalKey].inbound;
+          if (oddOutboundTerminal && evenInboundTerminal) {
+            return trainNumber % 2 === 1 ? oddOutboundTerminal : evenInboundTerminal;
+          }
         }
       }
 
-      return direction;
+      return rawDestination && !isDirectionOnly(rawDestination) ? rawDestination : '';
     }
 
     function formatArrivalTime(timestamp) {
@@ -592,7 +651,7 @@
           : routeId === 'K' || routeId === '807' || routeId === '808' ? 'k-line'
           : 'other-line';
         markerClass = 'metro light-rail-marker ' + lightRailClass;
-        markerContent = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6l5-5 5 5M9 1h6" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="6" width="16" height="14" rx="3" fill="white"/><rect x="6" y="8" width="12" height="6" rx="1.5" fill="#333"/><circle cx="8" cy="17" r="1.4" fill="#333"/><circle cx="16" cy="17" r="1.4" fill="#333"/><circle cx="8" cy="21" r="1.5" fill="#333"/><circle cx="16" cy="21" r="1.5" fill="#333"/></svg>';
+        markerContent = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6l5-5 5 5M9 1h6" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="6" width="16" height="14" rx="3" fill="white"/><rect x="6" y="8" width="12" height="6" rx="1.5" fill="#333"/><circle cx="8" cy="17" r="1.4" fill="#333"/><circle cx="16" cy="17" r="1.4" fill="#333"/><circle cx="8" cy="21" r="1.5" fill="#333"/><circle cx="16" cy="21" r="1.5" fill="#333"/><path d="M8 20l-3 3M16 20l3 3M7 22h10" fill="none" stroke="white" stroke-width="1.6" stroke-linecap="round"/></svg>';
       } else if (vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak') {
         const trainLetter = vehicle.agency === 'metrolink' ? 'M' : 'A';
         markerClass = vehicle.agency + ' commuter-rail-marker';
@@ -773,12 +832,17 @@
     }
 
     async function updateMetrolinkTrains() {
+      let officialVehicles = [];
+      let officialError = '';
+      let publicVehicles = [];
+      let publicError = '';
+
       try {
         const response = await fetch('/api/vehicles', { cache: 'no-store' });
         if (!response.ok) throw new Error('Metrolink API returned HTTP ' + response.status);
         const payload = await response.json();
         if (payload.errors?.metrolink) throw new Error(payload.errors.metrolink);
-        const officialVehicles = (payload.vehicles || []).map(function (vehicle) {
+        officialVehicles = (payload.vehicles || []).map(function (vehicle) {
           return {
             agency: 'metrolink',
             id: vehicle.id,
@@ -797,42 +861,50 @@
         }).filter(function (vehicle) {
           return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude);
         });
-        let amtrakVehicles = [];
-        try {
-          amtrakVehicles = await fetchPublicAmtrakTrains();
-        } catch (error) {
-          // Keep Metrolink API trains running even if the public Amtrak fallback is unavailable.
-        }
-        const vehicles = officialVehicles.concat(amtrakVehicles);
-        const activeMetrolinkIds = new Set(vehicles
-          .filter((vehicle) => vehicle.agency === 'metrolink')
-          .map((vehicle) => 'metrolink:' + vehicle.id));
-        const activeAmtrakIds = new Set(vehicles
-          .filter((vehicle) => vehicle.agency === 'amtrak')
-          .map((vehicle) => 'amtrak:' + vehicle.id));
-
-        vehicles.forEach(function (vehicle) {
-          upsertLiveVehicle(vehicle);
-        });
-        removeAgencyMarkersNotIn('metrolink', activeMetrolinkIds);
-        removeAgencyMarkersNotIn('amtrak', activeAmtrakIds);
-        metrolinkStatus = 'connected via API key';
-        updateLiveStatus();
       } catch (error) {
-        metrolinkStatus = error.message;
-        updateLiveStatus();
+        officialError = error.message;
       }
+
+      try {
+        publicVehicles = await fetchPublicMetrolinkAndAmtrakTrains();
+      } catch (error) {
+        publicError = error.message;
+      }
+
+      const publicMetrolinkVehicles = officialVehicles.length ? [] : publicVehicles.filter((vehicle) => vehicle.agency === 'metrolink');
+      const amtrakVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'amtrak');
+      const vehicles = officialVehicles.concat(publicMetrolinkVehicles, amtrakVehicles);
+      const activeMetrolinkIds = new Set(vehicles
+        .filter((vehicle) => vehicle.agency === 'metrolink')
+        .map((vehicle) => 'metrolink:' + vehicle.id));
+      const activeAmtrakIds = new Set(vehicles
+        .filter((vehicle) => vehicle.agency === 'amtrak')
+        .map((vehicle) => 'amtrak:' + vehicle.id));
+
+      vehicles.forEach(function (vehicle) {
+        upsertLiveVehicle(vehicle);
+      });
+      removeAgencyMarkersNotIn('metrolink', activeMetrolinkIds);
+      removeAgencyMarkersNotIn('amtrak', activeAmtrakIds);
+
+      if (officialVehicles.length) {
+        metrolinkStatus = 'connected via API key';
+      } else if (publicMetrolinkVehicles.length || amtrakVehicles.length) {
+        metrolinkStatus = officialError ? 'public fallback' : 'connected public feed';
+      } else {
+        metrolinkStatus = officialError || publicError || 'no live trains found';
+      }
+      updateLiveStatus();
     }
 
-    async function fetchPublicAmtrakTrains() {
+    async function fetchPublicMetrolinkAndAmtrakTrains() {
       const response = await fetch('https://rtt.metrolinktrains.com/trainlist.json', { cache: 'no-store' });
       if (!response.ok) throw new Error('public train feed returned HTTP ' + response.status);
       const data = await response.json();
-      return (Array.isArray(data) ? data : []).filter(function (train) {
-        return /PAC\s*SURF|AMTRAK/i.test(String(train.line || ''));
-      }).map(function (train) {
+      return (Array.isArray(data) ? data : []).map(function (train) {
+        const isAmtrak = /PAC\s*SURF|AMTRAK/i.test(String(train.line || ''));
         return {
-          agency: 'amtrak',
+          agency: isAmtrak ? 'amtrak' : 'metrolink',
           id: train.symbol,
           label: train.symbol,
           routeId: train.line,
