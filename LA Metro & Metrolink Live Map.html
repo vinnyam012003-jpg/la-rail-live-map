@@ -349,6 +349,25 @@
       return destinations[routeId]?.[Number(directionId)] || 'Direction ' + (Number(directionId) + 1);
     }
 
+    function metroDestinationFromBearing(routeId, bearing) {
+      const heading = Number(bearing);
+      if (!Number.isFinite(heading)) return '';
+
+      const isEastbound = heading <= 90 || heading >= 270;
+      const isNorthbound = heading <= 180;
+      const route = String(routeId || '');
+
+      if (route === '801' || route === 'A') return isEastbound || isNorthbound ? 'Pomona North' : 'Long Beach';
+      if (route === '802' || route === 'B') return isNorthbound ? 'North Hollywood' : 'Union Station';
+      if (route === '803' || route === 'C') return isEastbound ? 'Norwalk' : 'LAX / Metro Transit Center';
+      if (route === '804' || route === 'E') return isEastbound ? 'East Los Angeles' : 'Santa Monica';
+      if (route === '805' || route === 'D') return isEastbound ? 'Union Station' : 'Wilshire / La Cienega';
+      if (route === '807' || route === '808' || route === 'K') return isNorthbound ? 'Expo / Crenshaw' : 'Redondo Beach';
+      if (route === '901' || route === 'G') return isEastbound ? 'North Hollywood' : 'Chatsworth';
+      if (route === '910' || route === '950' || route === 'J') return isNorthbound || isEastbound ? 'El Monte' : 'Harbor Gateway / San Pedro';
+      return '';
+    }
+
     function normalizeTrainDirection(value) {
       return String(value || '').trim().toLowerCase()
         .replace(/^direction\s*:\s*/i, '')
@@ -450,6 +469,8 @@
 
       if (vehicle.agency === 'metro' && direction !== '') {
         return metroDestination(routeId, direction);
+      } else if (vehicle.agency === 'metro') {
+        return metroDestinationFromBearing(routeId, vehicle.bearing);
       }
 
       if (vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak') {
