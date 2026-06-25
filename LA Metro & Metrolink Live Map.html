@@ -414,7 +414,7 @@
         .trim();
       if (/\bAV\b|ANTELOPE/.test(line)) return 'av';
       if (/\bVC\b|VENTURA/.test(line)) return 'vc';
-      if (/\bIE\s*OC\b|INLAND EMPIRE|ORANGE COUNTY.*INLAND|IEOC/.test(line)) return 'ieoc';
+      if (/\bIE\s*OC\b|INLAND EMP\b|INLAND EMPIRE|ORANGE CO\b|ORANGE COUNTY.*INLAND|IEOC/.test(line)) return 'ieoc';
       if (/\b91\b|PERRIS/.test(line)) return 'pv91';
       if (/\bRIV\b|RIVERSIDE/.test(line)) return 'riv';
       if (/\bOC\b|ORANGE COUNTY/.test(line)) return 'oc';
@@ -457,7 +457,10 @@
         // Infer the endpoint from the train number when possible:
         // odd-numbered trains generally travel away from L.A.; even-numbered trains generally travel toward L.A.
         const trainNumber = Number(String(vehicle.label || vehicle.id || '').match(/\d+/)?.[0]);
-        if (terminalKey && Number.isFinite(trainNumber) && terminalKey !== 'ieoc' && terminalKey !== 'pacsurf') {
+        if (terminalKey === 'ieoc' && Number.isFinite(trainNumber)) {
+          return trainNumber % 2 === 0 ? 'San Bernardino - Downtown' : 'Oceanside';
+        }
+        if (terminalKey && Number.isFinite(trainNumber) && terminalKey !== 'pacsurf') {
           const oddOutboundTerminal = terminals[terminalKey].outbound;
           const evenInboundTerminal = terminals[terminalKey].inbound;
           if (oddOutboundTerminal && evenInboundTerminal) {
