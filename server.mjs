@@ -14,7 +14,7 @@ const port = Number(process.env.PORT || 8080);
 const host = process.env.HOST || '0.0.0.0';
 const metrolinkFeed = {
   url: 'https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-vehicles',
-  headers: { 'X-Api-Key': process.env.METROLINK_API_KEY || '' },
+  headers: { 'X-Api-Key': (process.env.METROLINK_API_KEY || '').trim() },
   cacheMs: 30000
 };
 const metrolinkPublicFeed = 'https://rtt.metrolinktrains.com/trainlist.json';
@@ -49,7 +49,7 @@ function loadLocalEnv(path) {
 }
 
 async function fetchMetrolinkVehicles() {
-  const apiKey = process.env.METROLINK_API_KEY || '';
+  const apiKey = (process.env.METROLINK_API_KEY || '').trim();
 
   if (!apiKey || apiKey.startsWith('your_')) {
     throw new Error('Metrolink API key is not configured');
@@ -185,7 +185,7 @@ function numberFromGtfs(value) {
 }
 
 async function fetchMetroGtfsRealtime(feedType) {
-  const apiKey = process.env.LA_METRO_API_KEY || '';
+  const apiKey = (process.env.LA_METRO_API_KEY || '').trim();
   const feed = metroFeeds[feedType];
 
   if (!feed) throw new Error('Unknown Metro feed');

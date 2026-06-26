@@ -756,8 +756,8 @@
     async function updateMetroVehicles() {
       try {
         const response = await fetch('/api/metro/vehicles', { cache: 'no-store' });
-        if (!response.ok) throw new Error('Metro API returned HTTP ' + response.status);
         const payload = await response.json();
+        if (!response.ok) throw new Error(payload.errors?.metro || 'Metro API returned HTTP ' + response.status);
         if (payload.errors?.metro) throw new Error(payload.errors.metro);
 
         const vehicles = (payload.vehicles || []).map(function (vehicle) {
@@ -794,8 +794,8 @@
     async function updateMetroTripUpdates() {
       try {
         const response = await fetch('/api/metro/trip-updates', { cache: 'no-store' });
-        if (!response.ok) throw new Error('Metro trip updates returned HTTP ' + response.status);
         const payload = await response.json();
+        if (!response.ok) throw new Error(payload.errors?.metro || 'Metro trip updates returned HTTP ' + response.status);
         if (payload.errors?.metro) throw new Error(payload.errors.metro);
 
         const now = Date.now() / 1000;
@@ -840,8 +840,10 @@
 
       try {
         const response = await fetch('/api/vehicles', { cache: 'no-store' });
-        if (!response.ok) throw new Error('Metrolink live feed returned HTTP ' + response.status);
         const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.errors?.metrolink || payload.errors?.public || 'Metrolink live feed returned HTTP ' + response.status);
+        }
         feedSource = payload.source || '';
         if (payload.errors?.metrolink && !(payload.vehicles || []).length) throw new Error(payload.errors.metrolink);
         vehicles = (payload.vehicles || []).map(function (vehicle) {
