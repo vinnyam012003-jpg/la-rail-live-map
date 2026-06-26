@@ -21,12 +21,18 @@ const metrolinkPublicFeed = 'https://rtt.metrolinktrains.com/trainlist.json';
 const metrolinkCache = { fetchedAt: 0, value: null, pending: null };
 const metroFeeds = {
   vehicles: {
-    url: 'https://api.goswift.ly/real-time/lametro/gtfs-rt-vehicle-positions',
-    cacheMs: 15000
+    urls: [
+      'https://api.goswift.ly/real-time/lametro/gtfs-rt-vehicle-positions',
+      'https://api.goswift.ly/real-time/lametro-rail/gtfs-rt-vehicle-positions'
+    ],
+    cacheMs: 20000
   },
   tripUpdates: {
-    url: 'https://api.goswift.ly/real-time/lametro/gtfs-rt-trip-updates',
-    cacheMs: 30000
+    urls: [
+      'https://api.goswift.ly/real-time/lametro/gtfs-rt-trip-updates',
+      'https://api.goswift.ly/real-time/lametro-rail/gtfs-rt-trip-updates'
+    ],
+    cacheMs: 40000
   }
 };
 const metroCache = {
@@ -184,6 +190,10 @@ function numberFromGtfs(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeMetroRouteId(routeId) {
+  return String(routeId || '').trim().replace(/-.+$/, '');
+}
+
 async function fetchMetroGtfsRealtime(feedType) {
   const apiKey = (process.env.LA_METRO_API_KEY || '').trim();
   const feed = metroFeeds[feedType];
@@ -193,17 +203,31 @@ async function fetchMetroGtfsRealtime(feedType) {
     throw new Error('LA Metro API key is not configured');
   }
 
-  const response = await fetch(feed.url, {
-    headers: { authorization: apiKey },
-    signal: AbortSignal.timeout(12000)
-  });
+  const results = await Promise.allSettled(feed.urls.map(async (feedUrl) => {
+    const response = await fetch(feedUrl, {
+      headers: { authorization: apiKey },
+      signal: AbortSignal.timeout(12000)
+    });
 
-  if (!response.ok) {
-    throw new Error(`LA Metro ${feedType} feed returned HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`${feedUrl.replace(/^https?:\/\/[^/]+\//, '')} returned HTTP ${response.status}`);
+    }
+
+    const buffer = new Uint8Array(await response.arrayBuffer());
+    return GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buffer);
+  }));
+  const messages = results
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value);
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason.message);
+
+  if (!messages.length) {
+    throw new Error(`LA Metro ${feedType} feeds failed: ${errors.join('; ')}`);
   }
 
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  return GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buffer);
+  return { messages, errors };
 }
 
 async function getCachedMetroFeed(feedType, parser) {
@@ -217,11 +241,12 @@ async function getCachedMetroFeed(feedType, parser) {
 
   if (!cache.pending) {
     cache.pending = fetchMetroGtfsRealtime(feedType)
-      .then((message) => {
+      .then((result) => {
         const value = {
           updatedAt: new Date().toISOString(),
           cacheSeconds: Math.round(feed.cacheMs / 1000),
-          ...parser(message)
+          errors: result.errors.length ? { metroPartial: result.errors.join('; ') } : {},
+          ...parser(result.messages)
         };
         cache.value = value;
         cache.fetchedAt = Date.now();
@@ -236,9 +261,9 @@ async function getCachedMetroFeed(feedType, parser) {
   return { ...value, cacheAgeMs: 0 };
 }
 
-function parseMetroVehicles(message) {
+function parseMetroVehicles(messages) {
   return {
-    vehicles: message.entity
+    vehicles: messages.flatMap((message) => message.entity)
       .filter((entity) => entity.vehicle?.position)
       .map((entity) => {
         const vehicle = entity.vehicle;
@@ -246,7 +271,8 @@ function parseMetroVehicles(message) {
           id: vehicle.vehicle?.id || entity.id,
           label: vehicle.vehicle?.label || vehicle.vehicle?.id || entity.id,
           tripId: vehicle.trip?.tripId || '',
-          routeId: vehicle.trip?.routeId || '',
+          routeId: normalizeMetroRouteId(vehicle.trip?.routeId),
+          rawRouteId: vehicle.trip?.routeId || '',
           direction: vehicle.trip?.directionId ?? '',
           latitude: vehicle.position.latitude,
           longitude: vehicle.position.longitude,
@@ -258,16 +284,17 @@ function parseMetroVehicles(message) {
   };
 }
 
-function parseMetroTripUpdates(message) {
+function parseMetroTripUpdates(messages) {
   return {
-    updates: message.entity
+    updates: messages.flatMap((message) => message.entity)
       .filter((entity) => entity.tripUpdate?.trip)
       .map((entity) => {
         const tripUpdate = entity.tripUpdate;
         return {
           id: entity.id,
           tripId: tripUpdate.trip?.tripId || entity.id,
-          routeId: tripUpdate.trip?.routeId || '',
+          routeId: normalizeMetroRouteId(tripUpdate.trip?.routeId),
+          rawRouteId: tripUpdate.trip?.routeId || '',
           direction: tripUpdate.trip?.directionId ?? '',
           timestamp: numberFromGtfs(tripUpdate.timestamp),
           stopTimeUpdates: (tripUpdate.stopTimeUpdate || []).map((stopUpdate) => ({

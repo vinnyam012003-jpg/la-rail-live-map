@@ -987,10 +987,10 @@
       updateLiveStatus();
     }
 
-    connectMetroWebSocket('wss://api.metro.net/ws/LACMTA_Rail/vehicle_positions');
-    connectMetroWebSocket('wss://api.metro.net/ws/LACMTA/vehicle_positions/910,901');
-    connectMetroTripUpdates('wss://api.metro.net/ws/LACMTA_Rail/trip_updates');
-    connectMetroTripUpdates('wss://api.metro.net/ws/LACMTA/trip_updates/910,901');
+    updateMetroVehicles();
+    setInterval(updateMetroVehicles, 15000);
+    updateMetroTripUpdates();
+    setInterval(updateMetroTripUpdates, 30000);
     setInterval(removeStaleMetroVehicles, 30000);
     updateLiveStatus();
 
