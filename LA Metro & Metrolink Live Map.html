@@ -640,6 +640,7 @@
       '901', '910', '950',
       'A', 'B', 'C', 'D', 'E', 'G', 'J', 'K'
     ]);
+    let openMetroSockets = 0;
     let metroStatus = 'connecting';
     let metrolinkStatus = 'checking';
     let lastLiveUpdate = null;
@@ -820,6 +821,100 @@
       }
     }
 
+    function connectMetroWebSocket(url) {
+      const socket = new WebSocket(url);
+      let pingTimer;
+
+      socket.addEventListener('open', function () {
+        openMetroSockets += 1;
+        metroStatus = 'connected';
+        updateLiveStatus();
+        pingTimer = setInterval(function () {
+          if (socket.readyState === WebSocket.OPEN) socket.send('ping');
+        }, 30000);
+      });
+
+      socket.addEventListener('message', function (event) {
+        try {
+          const data = JSON.parse(event.data);
+          const vehicle = data.vehicle;
+          if (!vehicle || !vehicle.position || !vehicle.vehicle) return;
+
+          const routeId = String(data.route_code || vehicle.trip?.routeId || '');
+          upsertLiveVehicle({
+            agency: 'metro',
+            id: vehicle.vehicle.id,
+            label: vehicle.vehicle.label || vehicle.vehicle.id,
+            tripId: vehicle.trip?.tripId || '',
+            routeId: routeId,
+            direction: vehicle.trip?.directionId ?? '',
+            latitude: vehicle.position.latitude,
+            longitude: vehicle.position.longitude,
+            bearing: vehicle.position.bearing ?? null,
+            speed: vehicle.position.speed ?? null,
+            timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
+          });
+        } catch (error) {
+          // Ignore non-JSON heartbeat responses.
+        }
+      });
+
+      socket.addEventListener('error', function () {
+        metroStatus = 'connection error';
+        updateLiveStatus();
+      });
+
+      socket.addEventListener('close', function () {
+        clearInterval(pingTimer);
+        openMetroSockets = Math.max(0, openMetroSockets - 1);
+        metroStatus = openMetroSockets ? 'partially connected' : 'reconnecting';
+        updateLiveStatus();
+        setTimeout(function () { connectMetroWebSocket(url); }, 5000);
+      });
+    }
+
+    function connectMetroTripUpdates(url) {
+      const socket = new WebSocket(url);
+      let pingTimer;
+
+      socket.addEventListener('open', function () {
+        pingTimer = setInterval(function () {
+          if (socket.readyState === WebSocket.OPEN) socket.send('ping');
+        }, 30000);
+      });
+
+      socket.addEventListener('message', function (event) {
+        try {
+          const data = JSON.parse(event.data);
+          const tripUpdate = data.tripUpdate;
+          if (!tripUpdate?.trip || !Array.isArray(tripUpdate.stopTimeUpdate)) return;
+          const routeId = String(data.route_code || tripUpdate.trip.routeId || '');
+          const directionId = Number(tripUpdate.trip.directionId ?? 0);
+          const tripId = String(tripUpdate.trip.tripId || data.id || '');
+          const now = Date.now() / 1000;
+
+          tripUpdate.stopTimeUpdate.forEach(function (stopUpdate) {
+            const stopId = String(stopUpdate.stopId || '');
+            const time = Number(stopUpdate.arrival?.time || stopUpdate.departure?.time);
+            if (!stopId || !Number.isFinite(time) || time < now - 60) return;
+            const existing = (metroArrivalPredictions.get(stopId) || []).filter(function (prediction) {
+              return prediction.tripId !== tripId && prediction.time >= now - 60;
+            });
+            existing.push({ routeId: routeId, directionId: directionId, tripId: tripId, time: time });
+            existing.sort((first, second) => first.time - second.time);
+            metroArrivalPredictions.set(stopId, existing.slice(0, 30));
+          });
+        } catch (error) {
+          // Ignore heartbeat messages.
+        }
+      });
+
+      socket.addEventListener('close', function () {
+        clearInterval(pingTimer);
+        setTimeout(function () { connectMetroTripUpdates(url); }, 5000);
+      });
+    }
+
     function removeStaleMetroVehicles() {
       const cutoff = Math.floor(Date.now() / 1000) - 120;
       Array.from(agencyMarkerIds.metro).forEach(function (markerId) {
@@ -892,10 +987,10 @@
       updateLiveStatus();
     }
 
-    updateMetroVehicles();
-    setInterval(updateMetroVehicles, 15000);
-    updateMetroTripUpdates();
-    setInterval(updateMetroTripUpdates, 30000);
+    connectMetroWebSocket('wss://api.metro.net/ws/LACMTA_Rail/vehicle_positions');
+    connectMetroWebSocket('wss://api.metro.net/ws/LACMTA/vehicle_positions/910,901');
+    connectMetroTripUpdates('wss://api.metro.net/ws/LACMTA_Rail/trip_updates');
+    connectMetroTripUpdates('wss://api.metro.net/ws/LACMTA/trip_updates/910,901');
     setInterval(removeStaleMetroVehicles, 30000);
     updateLiveStatus();
 
