@@ -47,6 +47,13 @@
       font: bold 13px/1 Arial, sans-serif;
     }
 
+    .train-hitbox {
+      display: grid;
+      width: 48px;
+      height: 48px;
+      place-items: center;
+    }
+
     .train-marker.metro { background: #111; }
     .train-marker.metrolink { background: #00a6b2; }
     .train-marker.amtrak { background: #2b5c9b; }
@@ -78,6 +85,11 @@
     .station-icon {
       border: 0;
       background: transparent;
+    }
+
+    .station-hitbox {
+      display: grid;
+      place-items: center;
     }
 
     .station-symbol {
@@ -195,6 +207,19 @@
     });
 
     const metroArrivalPredictions = new Map();
+    const metroTripUpdatesByTripId = new Map();
+    const metroStopNames = new Map();
+    metroStations.forEach(function (station) {
+      const stationId = String(station.id || '');
+      if (!stationId) return;
+      metroStopNames.set(stationId, station.name);
+      metroStopNames.set(stationId.replace(/S$/, ''), station.name);
+    });
+    brtStations.forEach(function (station) {
+      (station.arrivalStopIds || []).forEach(function (stopId) {
+        metroStopNames.set(String(stopId), station.name);
+      });
+    });
     let metrolinkScheduleCache = [];
     let metrolinkScheduleFetchedAt = 0;
     const stationLayer = L.layerGroup().addTo(map);
@@ -282,11 +307,12 @@
         : shape === 'metro-center'
           ? [22, 22]
           : shape === 'square' ? [11, 11] : [10, 10];
+      const hitboxSize = [size[0] * 2, size[1] * 2];
       return L.divIcon({
         className: 'station-icon',
-        html: '<div class="station-symbol ' + shape + '"></div>',
-        iconSize: size,
-        iconAnchor: [size[0] / 2, size[1] / 2]
+        html: '<div class="station-hitbox" style="width:' + hitboxSize[0] + 'px;height:' + hitboxSize[1] + 'px"><div class="station-symbol ' + shape + '"></div></div>',
+        iconSize: hitboxSize,
+        iconAnchor: [hitboxSize[0] / 2, hitboxSize[1] / 2]
       });
     }
 
@@ -514,6 +540,46 @@
         '</div>';
     }
 
+    function metroStopName(stopId) {
+      const id = String(stopId || '');
+      return metroStopNames.get(id) || metroStopNames.get(id.replace(/S$/, '')) || id;
+    }
+
+    function nextStopForTrain(vehicle) {
+      if (vehicle.agency !== 'metro' || !vehicle.tripId) return null;
+      const tripUpdate = metroTripUpdatesByTripId.get(String(vehicle.tripId));
+      if (!tripUpdate || !Array.isArray(tripUpdate.stopTimeUpdates)) return null;
+
+      const now = Date.now() / 1000;
+      const currentSequence = Number(vehicle.currentStopSequence);
+      const currentStopId = String(vehicle.stopId || '');
+      const candidates = tripUpdate.stopTimeUpdates
+        .map(function (stopUpdate) {
+          const time = Number(stopUpdate.arrivalTime || stopUpdate.departureTime);
+          return {
+            stopId: String(stopUpdate.stopId || ''),
+            stopSequence: Number(stopUpdate.stopSequence),
+            time: time
+          };
+        })
+        .filter(function (stopUpdate) {
+          if (!stopUpdate.stopId || !Number.isFinite(stopUpdate.time) || stopUpdate.time < now - 30) return false;
+          if (Number.isFinite(currentSequence) && Number.isFinite(stopUpdate.stopSequence) &&
+            stopUpdate.stopSequence < currentSequence) return false;
+          if (currentStopId && stopUpdate.stopId === currentStopId && stopUpdate.time < now + 45) return false;
+          return true;
+        })
+        .sort(function (first, second) {
+          return first.time - second.time;
+        });
+
+      if (!candidates.length) return null;
+      return {
+        name: metroStopName(candidates[0].stopId),
+        time: candidates[0].time
+      };
+    }
+
     function metroArrivalsForCluster(cluster) {
       const stopIds = new Set();
       cluster.records.filter((record) => record.agency === 'Metro').forEach(function (record) {
@@ -689,24 +755,27 @@
       }
       return L.divIcon({
         className: '',
-        html: '<div class="train-marker ' + markerClass + '">' + markerContent + '</div>',
-        iconSize: [24, 24],
-        iconAnchor: [12, 12]
+        html: '<div class="train-hitbox"><div class="train-marker ' + markerClass + '">' + markerContent + '</div></div>',
+        iconSize: [48, 48],
+        iconAnchor: [24, 24]
       });
     }
 
     function popupFor(vehicle) {
-      const agency = vehicle.agency === 'metro' ? 'LA Metro'
-        : vehicle.agency === 'amtrak' ? 'Amtrak'
-        : 'Metrolink';
+      const title = vehicle.agency === 'metro' ? 'LA Metro ' + metroLineName(vehicle.routeId) + ' Line'
+        : vehicle.agency === 'amtrak' ? 'Amtrak train'
+        : 'Metrolink train';
       const updated = vehicle.timestamp
         ? new Date(vehicle.timestamp * 1000).toLocaleTimeString()
         : 'Unknown';
       const destination = destinationForTrain(vehicle);
-      return '<strong>' + agency + ' train</strong><br>' +
+      const nextStop = nextStopForTrain(vehicle);
+      return '<strong>' + escapeHtml(title) + '</strong><br>' +
         'Route: ' + (vehicle.routeId || 'Unknown') + '<br>' +
         'Vehicle: ' + (vehicle.label || vehicle.id) + '<br>' +
         (destination ? 'To: ' + destination + '<br>' : '') +
+        (nextStop ? 'Next station: ' + escapeHtml(nextStop.name) + '<br>' +
+          'Arrives in: ' + formatArrivalTime(nextStop.time) + '<br>' : '') +
         (vehicle.delayStatus ? 'Status: ' + vehicle.delayStatus + '<br>' : '') +
         'Updated: ' + updated;
     }
@@ -769,6 +838,9 @@
             tripId: vehicle.tripId || '',
             routeId: String(vehicle.routeId || ''),
             direction: vehicle.direction ?? '',
+            currentStopSequence: vehicle.currentStopSequence ?? null,
+            currentStatus: vehicle.currentStatus ?? '',
+            stopId: vehicle.stopId || '',
             latitude: Number(vehicle.latitude),
             longitude: Number(vehicle.longitude),
             bearing: vehicle.bearing ?? null,
@@ -801,10 +873,12 @@
 
         const now = Date.now() / 1000;
         metroArrivalPredictions.clear();
+        metroTripUpdatesByTripId.clear();
         (payload.updates || []).forEach(function (tripUpdate) {
           const routeId = String(tripUpdate.routeId || '');
           const directionId = Number(tripUpdate.direction ?? 0);
           const tripId = String(tripUpdate.tripId || tripUpdate.id || '');
+          if (tripId) metroTripUpdatesByTripId.set(tripId, tripUpdate);
 
           (tripUpdate.stopTimeUpdates || []).forEach(function (stopUpdate) {
             const stopId = String(stopUpdate.stopId || '');

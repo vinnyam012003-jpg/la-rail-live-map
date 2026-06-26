@@ -274,6 +274,9 @@ function parseMetroVehicles(messages) {
           routeId: normalizeMetroRouteId(vehicle.trip?.routeId),
           rawRouteId: vehicle.trip?.routeId || '',
           direction: vehicle.trip?.directionId ?? '',
+          currentStopSequence: numberFromGtfs(vehicle.currentStopSequence),
+          currentStatus: vehicle.currentStatus ?? '',
+          stopId: vehicle.stopId || '',
           latitude: vehicle.position.latitude,
           longitude: vehicle.position.longitude,
           bearing: vehicle.position.bearing ?? null,
@@ -299,6 +302,7 @@ function parseMetroTripUpdates(messages) {
           timestamp: numberFromGtfs(tripUpdate.timestamp),
           stopTimeUpdates: (tripUpdate.stopTimeUpdate || []).map((stopUpdate) => ({
             stopId: stopUpdate.stopId || '',
+            stopSequence: numberFromGtfs(stopUpdate.stopSequence),
             arrivalTime: numberFromGtfs(stopUpdate.arrival?.time),
             departureTime: numberFromGtfs(stopUpdate.departure?.time)
           }))
