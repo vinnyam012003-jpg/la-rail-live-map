@@ -8,3 +8,5 @@ services:
     envVars:
       - key: METROLINK_API_KEY
         sync: false
+      - key: LA_METRO_API_KEY
+        sync: false

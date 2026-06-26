@@ -640,7 +640,6 @@
       '901', '910', '950',
       'A', 'B', 'C', 'D', 'E', 'G', 'J', 'K'
     ]);
-    let openMetroSockets = 0;
     let metroStatus = 'connecting';
     let metrolinkStatus = 'checking';
     let lastLiveUpdate = null;
@@ -754,98 +753,71 @@
       });
     }
 
-    function connectMetroWebSocket(url) {
-      const socket = new WebSocket(url);
-      let pingTimer;
+    async function updateMetroVehicles() {
+      try {
+        const response = await fetch('/api/metro/vehicles', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Metro API returned HTTP ' + response.status);
+        const payload = await response.json();
+        if (payload.errors?.metro) throw new Error(payload.errors.metro);
 
-      socket.addEventListener('open', function () {
-        openMetroSockets += 1;
-        metroStatus = 'connected';
-        updateLiveStatus();
-        pingTimer = setInterval(function () {
-          if (socket.readyState === WebSocket.OPEN) socket.send('ping');
-        }, 30000);
-      });
-
-      socket.addEventListener('message', function (event) {
-        try {
-          const data = JSON.parse(event.data);
-          const vehicle = data.vehicle;
-          if (!vehicle || !vehicle.position || !vehicle.vehicle) return;
-
-          const routeId = String(data.route_code || vehicle.trip?.routeId || '');
-          upsertLiveVehicle({
+        const vehicles = (payload.vehicles || []).map(function (vehicle) {
+          return {
             agency: 'metro',
-            id: vehicle.vehicle.id,
-            label: vehicle.vehicle.label || vehicle.vehicle.id,
-            tripId: vehicle.trip?.tripId || '',
-            routeId: routeId,
-            direction: vehicle.trip?.directionId ?? '',
-            latitude: vehicle.position.latitude,
-            longitude: vehicle.position.longitude,
-            bearing: vehicle.position.bearing ?? null,
-            speed: vehicle.position.speed ?? null,
+            id: vehicle.id,
+            label: vehicle.label || vehicle.id,
+            tripId: vehicle.tripId || '',
+            routeId: String(vehicle.routeId || ''),
+            direction: vehicle.direction ?? '',
+            latitude: Number(vehicle.latitude),
+            longitude: Number(vehicle.longitude),
+            bearing: vehicle.bearing ?? null,
+            speed: vehicle.speed ?? null,
             timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
-          });
-        } catch (error) {
-          // Ignore non-JSON heartbeat responses.
-        }
-      });
+          };
+        }).filter(function (vehicle) {
+          return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude) &&
+            shouldShowVehicle(vehicle);
+        });
 
-      socket.addEventListener('error', function () {
-        metroStatus = 'connection error';
-        updateLiveStatus();
-      });
-
-      socket.addEventListener('close', function () {
-        clearInterval(pingTimer);
-        openMetroSockets = Math.max(0, openMetroSockets - 1);
-        metroStatus = openMetroSockets ? 'partially connected' : 'reconnecting';
-        updateLiveStatus();
-        setTimeout(function () { connectMetroWebSocket(url); }, 5000);
-      });
+        const activeMetroIds = new Set(vehicles.map((vehicle) => 'metro:' + vehicle.id));
+        vehicles.forEach(function (vehicle) {
+          upsertLiveVehicle(vehicle);
+        });
+        removeAgencyMarkersNotIn('metro', activeMetroIds);
+        metroStatus = 'connected via API key';
+      } catch (error) {
+        metroStatus = error.message || 'connection error';
+      }
+      updateLiveStatus();
     }
 
-    function connectMetroTripUpdates(url) {
-      const socket = new WebSocket(url);
-      let pingTimer;
+    async function updateMetroTripUpdates() {
+      try {
+        const response = await fetch('/api/metro/trip-updates', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Metro trip updates returned HTTP ' + response.status);
+        const payload = await response.json();
+        if (payload.errors?.metro) throw new Error(payload.errors.metro);
 
-      socket.addEventListener('open', function () {
-        pingTimer = setInterval(function () {
-          if (socket.readyState === WebSocket.OPEN) socket.send('ping');
-        }, 30000);
-      });
+        const now = Date.now() / 1000;
+        metroArrivalPredictions.clear();
+        (payload.updates || []).forEach(function (tripUpdate) {
+          const routeId = String(tripUpdate.routeId || '');
+          const directionId = Number(tripUpdate.direction ?? 0);
+          const tripId = String(tripUpdate.tripId || tripUpdate.id || '');
 
-      socket.addEventListener('message', function (event) {
-        try {
-          const data = JSON.parse(event.data);
-          const tripUpdate = data.tripUpdate;
-          if (!tripUpdate?.trip || !Array.isArray(tripUpdate.stopTimeUpdate)) return;
-          const routeId = String(data.route_code || tripUpdate.trip.routeId || '');
-          const directionId = Number(tripUpdate.trip.directionId ?? 0);
-          const tripId = String(tripUpdate.trip.tripId || data.id || '');
-          const now = Date.now() / 1000;
-
-          tripUpdate.stopTimeUpdate.forEach(function (stopUpdate) {
+          (tripUpdate.stopTimeUpdates || []).forEach(function (stopUpdate) {
             const stopId = String(stopUpdate.stopId || '');
-            const time = Number(stopUpdate.arrival?.time || stopUpdate.departure?.time);
+            const time = Number(stopUpdate.arrivalTime || stopUpdate.departureTime);
             if (!stopId || !Number.isFinite(time) || time < now - 60) return;
-            const existing = (metroArrivalPredictions.get(stopId) || []).filter(function (prediction) {
-              return prediction.tripId !== tripId && prediction.time >= now - 60;
-            });
+            const existing = metroArrivalPredictions.get(stopId) || [];
             existing.push({ routeId: routeId, directionId: directionId, tripId: tripId, time: time });
             existing.sort((first, second) => first.time - second.time);
             metroArrivalPredictions.set(stopId, existing.slice(0, 30));
           });
-        } catch (error) {
-          // Ignore heartbeat messages.
-        }
-      });
-
-      socket.addEventListener('close', function () {
-        clearInterval(pingTimer);
-        setTimeout(function () { connectMetroTripUpdates(url); }, 5000);
-      });
+        });
+      } catch (error) {
+        // Keep the previous arrival predictions if one poll fails.
+      }
     }
 
     function removeStaleMetroVehicles() {
@@ -862,19 +834,19 @@
     }
 
     async function updateMetrolinkTrains() {
-      let officialVehicles = [];
-      let officialError = '';
-      let publicVehicles = [];
-      let publicError = '';
+      let vehicles = [];
+      let feedSource = '';
+      let feedError = '';
 
       try {
         const response = await fetch('/api/vehicles', { cache: 'no-store' });
-        if (!response.ok) throw new Error('Metrolink API returned HTTP ' + response.status);
+        if (!response.ok) throw new Error('Metrolink live feed returned HTTP ' + response.status);
         const payload = await response.json();
-        if (payload.errors?.metrolink) throw new Error(payload.errors.metrolink);
-        officialVehicles = (payload.vehicles || []).map(function (vehicle) {
+        feedSource = payload.source || '';
+        if (payload.errors?.metrolink && !(payload.vehicles || []).length) throw new Error(payload.errors.metrolink);
+        vehicles = (payload.vehicles || []).map(function (vehicle) {
           return {
-            agency: 'metrolink',
+            agency: vehicle.agency || 'metrolink',
             id: vehicle.id,
             label: vehicle.label || vehicle.id,
             tripId: vehicle.tripId || '',
@@ -892,18 +864,9 @@
           return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude);
         });
       } catch (error) {
-        officialError = error.message;
+        feedError = error.message;
       }
 
-      try {
-        publicVehicles = await fetchPublicMetrolinkAndAmtrakTrains();
-      } catch (error) {
-        publicError = error.message;
-      }
-
-      const publicMetrolinkVehicles = officialVehicles.length ? [] : publicVehicles.filter((vehicle) => vehicle.agency === 'metrolink');
-      const amtrakVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'amtrak');
-      const vehicles = officialVehicles.concat(publicMetrolinkVehicles, amtrakVehicles);
       const activeMetrolinkIds = new Set(vehicles
         .filter((vehicle) => vehicle.agency === 'metrolink')
         .map((vehicle) => 'metrolink:' + vehicle.id));
@@ -917,61 +880,25 @@
       removeAgencyMarkersNotIn('metrolink', activeMetrolinkIds);
       removeAgencyMarkersNotIn('amtrak', activeAmtrakIds);
 
-      if (officialVehicles.length) {
+      if (vehicles.some((vehicle) => vehicle.agency === 'metrolink') && feedSource === 'api-key') {
         metrolinkStatus = 'connected via API key';
-      } else if (publicMetrolinkVehicles.length || amtrakVehicles.length) {
-        metrolinkStatus = officialError ? 'public fallback' : 'connected public feed';
+      } else if (vehicles.length) {
+        metrolinkStatus = feedSource === 'public-fallback' ? 'public fallback' : 'connected';
       } else {
-        metrolinkStatus = officialError || publicError || 'no live trains found';
+        metrolinkStatus = feedError || 'no live trains found';
       }
       updateLiveStatus();
     }
 
-    async function fetchPublicMetrolinkAndAmtrakTrains() {
-      const response = await fetch('https://rtt.metrolinktrains.com/trainlist.json', { cache: 'no-store' });
-      if (!response.ok) throw new Error('public train feed returned HTTP ' + response.status);
-      const data = await response.json();
-      return (Array.isArray(data) ? data : []).map(function (train) {
-        const isAmtrak = /PAC\s*SURF|AMTRAK/i.test(String(train.line || ''));
-        return {
-          agency: isAmtrak ? 'amtrak' : 'metrolink',
-          id: train.symbol,
-          label: train.symbol,
-          routeId: train.line,
-          destination: train.destination || train.dest || train.terminal || train.TrainDestination || '',
-          latitude: parseMetrolinkCoordinate(train.lat),
-          longitude: parseMetrolinkCoordinate(train.long),
-          speed: Number(train.speed) || 0,
-          direction: train.direction || train.Direction || train.dir || train.Dir || train.trainDirection || train.TrainDirection || train.heading || '',
-          delayStatus: train.delay_status,
-          timestamp: parseMetrolinkTimestamp(train.ptc_time)
-        };
-      }).filter(function (vehicle) {
-        return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude);
-      });
-    }
-
-    function parseMetrolinkCoordinate(value) {
-      const parts = String(value || '').split(':').map(Number);
-      if (parts.length !== 3 || parts.some(function (part) { return !Number.isFinite(part); })) return NaN;
-      const sign = parts[0] < 0 ? -1 : 1;
-      return sign * (Math.abs(parts[0]) + parts[1] / 60 + parts[2] / 3600);
-    }
-
-    function parseMetrolinkTimestamp(value) {
-      const parsed = new Date(value);
-      return Number.isNaN(parsed.getTime()) ? null : Math.floor(parsed.getTime() / 1000);
-    }
-
-    connectMetroWebSocket('wss://api.metro.net/ws/LACMTA_Rail/vehicle_positions');
-    connectMetroWebSocket('wss://api.metro.net/ws/LACMTA/vehicle_positions/910,901');
-    connectMetroTripUpdates('wss://api.metro.net/ws/LACMTA_Rail/trip_updates');
-    connectMetroTripUpdates('wss://api.metro.net/ws/LACMTA/trip_updates/910,901');
+    updateMetroVehicles();
+    setInterval(updateMetroVehicles, 15000);
+    updateMetroTripUpdates();
+    setInterval(updateMetroTripUpdates, 30000);
     setInterval(removeStaleMetroVehicles, 30000);
     updateLiveStatus();
 
     updateMetrolinkTrains();
-    setInterval(updateMetrolinkTrains, 60000);
+    setInterval(updateMetrolinkTrains, 30000);
   </script>
 </body>
 </html>
