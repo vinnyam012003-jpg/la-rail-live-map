@@ -17,6 +17,7 @@ const metrolinkFeed = {
   headers: { 'X-Api-Key': (process.env.METROLINK_API_KEY || '').trim() },
   cacheMs: 30000
 };
+const metrolinkTripUpdatesFeed = 'https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-trips';
 const metrolinkPublicFeed = 'https://rtt.metrolinktrains.com/trainlist.json';
 const metrolinkCache = { fetchedAt: 0, value: null, pending: null };
 const metroFeeds = {
@@ -83,11 +84,53 @@ async function fetchMetrolinkVehicles() {
         tripId: vehicle.trip?.tripId || '',
         routeId: vehicle.trip?.routeId || '',
         direction: vehicle.trip?.directionId ?? '',
+        currentStopSequence: numberFromGtfs(vehicle.currentStopSequence),
+        currentStatus: vehicle.currentStatus ?? '',
+        stopId: vehicle.stopId || '',
         latitude: vehicle.position.latitude,
         longitude: vehicle.position.longitude,
         bearing: vehicle.position.bearing ?? null,
         speed: vehicle.position.speed ?? null,
         timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
+      };
+    });
+}
+
+async function fetchMetrolinkTripUpdates() {
+  const apiKey = (process.env.METROLINK_API_KEY || '').trim();
+
+  if (!apiKey || apiKey.startsWith('your_')) {
+    throw new Error('Metrolink API key is not configured');
+  }
+
+  const response = await fetch(metrolinkTripUpdatesFeed, {
+    headers: metrolinkFeed.headers,
+    signal: AbortSignal.timeout(12000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Metrolink trip updates feed returned HTTP ${response.status}`);
+  }
+
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  const message = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buffer);
+
+  return message.entity
+    .filter((entity) => entity.tripUpdate?.trip)
+    .map((entity) => {
+      const tripUpdate = entity.tripUpdate;
+      return {
+        id: entity.id,
+        tripId: tripUpdate.trip?.tripId || entity.id,
+        routeId: tripUpdate.trip?.routeId || '',
+        direction: tripUpdate.trip?.directionId ?? '',
+        timestamp: numberFromGtfs(tripUpdate.timestamp),
+        stopTimeUpdates: (tripUpdate.stopTimeUpdate || []).map((stopUpdate) => ({
+          stopId: stopUpdate.stopId || '',
+          stopSequence: numberFromGtfs(stopUpdate.stopSequence),
+          arrivalTime: numberFromGtfs(stopUpdate.arrival?.time),
+          departureTime: numberFromGtfs(stopUpdate.departure?.time)
+        }))
       };
     });
 }
@@ -144,18 +187,22 @@ async function getCachedMetrolinkVehicles() {
   if (!metrolinkCache.pending) {
     metrolinkCache.pending = Promise.allSettled([
       fetchMetrolinkVehicles(),
-      fetchPublicMetrolinkAndAmtrakVehicles()
+      fetchPublicMetrolinkAndAmtrakVehicles(),
+      fetchMetrolinkTripUpdates()
     ]).then((results) => {
       const officialResult = results[0];
       const publicResult = results[1];
+      const tripUpdatesResult = results[2];
       const errors = {};
       const officialVehicles = officialResult.status === 'fulfilled'
         ? officialResult.value.map((vehicle) => ({ ...vehicle, agency: 'metrolink' }))
         : [];
       const publicVehicles = publicResult.status === 'fulfilled' ? publicResult.value : [];
+      const tripUpdates = tripUpdatesResult.status === 'fulfilled' ? tripUpdatesResult.value : [];
 
       if (officialResult.status === 'rejected') errors.metrolink = officialResult.reason.message;
       if (publicResult.status === 'rejected') errors.public = publicResult.reason.message;
+      if (tripUpdatesResult.status === 'rejected') errors.metrolinkTripUpdates = tripUpdatesResult.reason.message;
 
       const publicMetrolinkVehicles = officialVehicles.length
         ? []
@@ -166,6 +213,7 @@ async function getCachedMetrolinkVehicles() {
         updatedAt: new Date().toISOString(),
         cacheSeconds: Math.round(metrolinkFeed.cacheMs / 1000),
         vehicles: officialVehicles.concat(publicMetrolinkVehicles, amtrakVehicles),
+        tripUpdates,
         source: officialVehicles.length ? 'api-key' : 'public-fallback',
         errors
       };

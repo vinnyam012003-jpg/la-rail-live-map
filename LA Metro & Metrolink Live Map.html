@@ -208,7 +208,9 @@
 
     const metroArrivalPredictions = new Map();
     const metroTripUpdatesByTripId = new Map();
+    const metrolinkTripUpdatesByTripId = new Map();
     const metroStopNames = new Map();
+    const metrolinkStopNames = new Map();
     metroStations.forEach(function (station) {
       const stationId = String(station.id || '');
       if (!stationId) return;
@@ -219,6 +221,9 @@
       (station.arrivalStopIds || []).forEach(function (stopId) {
         metroStopNames.set(String(stopId), station.name);
       });
+    });
+    metrolinkStations.forEach(function (station) {
+      if (station.id) metrolinkStopNames.set(String(station.id), station.name);
     });
     let metrolinkScheduleCache = [];
     let metrolinkScheduleFetchedAt = 0;
@@ -545,9 +550,26 @@
       return metroStopNames.get(id) || metroStopNames.get(id.replace(/S$/, '')) || id;
     }
 
+    function metrolinkStopName(stopId) {
+      const id = String(stopId || '');
+      return metrolinkStopNames.get(id) || id;
+    }
+
     function nextStopForTrain(vehicle) {
-      if (vehicle.agency !== 'metro' || !vehicle.tripId) return null;
-      const tripUpdate = metroTripUpdatesByTripId.get(String(vehicle.tripId));
+      if (vehicle.nextStopId && vehicle.nextStopTime) {
+        return {
+          name: vehicle.agency === 'metro'
+            ? metroStopName(vehicle.nextStopId)
+            : metrolinkStopName(vehicle.nextStopId),
+          time: Number(vehicle.nextStopTime)
+        };
+      }
+      if (!vehicle.tripId) return null;
+      const tripUpdate = vehicle.agency === 'metro'
+        ? metroTripUpdatesByTripId.get(String(vehicle.tripId))
+        : vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak'
+          ? metrolinkTripUpdatesByTripId.get(String(vehicle.tripId))
+          : null;
       if (!tripUpdate || !Array.isArray(tripUpdate.stopTimeUpdates)) return null;
 
       const now = Date.now() / 1000;
@@ -575,9 +597,37 @@
 
       if (!candidates.length) return null;
       return {
-        name: metroStopName(candidates[0].stopId),
+        name: vehicle.agency === 'metro'
+          ? metroStopName(candidates[0].stopId)
+          : metrolinkStopName(candidates[0].stopId),
         time: candidates[0].time
       };
+    }
+
+    function nextStopFromTripUpdate(vehicle, tripUpdate) {
+      if (!tripUpdate || !Array.isArray(tripUpdate.stopTimeUpdates)) return null;
+      const now = Date.now() / 1000;
+      const currentSequence = Number(vehicle.currentStopSequence);
+      const currentStopId = String(vehicle.stopId || '');
+      return tripUpdate.stopTimeUpdates
+        .map(function (stopUpdate) {
+          const time = Number(stopUpdate.arrivalTime || stopUpdate.departureTime);
+          return {
+            stopId: String(stopUpdate.stopId || ''),
+            stopSequence: Number(stopUpdate.stopSequence),
+            time: time
+          };
+        })
+        .filter(function (stopUpdate) {
+          if (!stopUpdate.stopId || !Number.isFinite(stopUpdate.time) || stopUpdate.time < now - 30) return false;
+          if (Number.isFinite(currentSequence) && currentSequence > 0 &&
+            Number.isFinite(stopUpdate.stopSequence) && stopUpdate.stopSequence < currentSequence) return false;
+          if (currentStopId && stopUpdate.stopId === currentStopId && stopUpdate.time < now + 45) return false;
+          return true;
+        })
+        .sort(function (first, second) {
+          return first.time - second.time;
+        })[0] || null;
     }
 
     function metroArrivalsForCluster(cluster) {
@@ -1015,8 +1065,13 @@
         }
         feedSource = payload.source || '';
         if (payload.errors?.metrolink && !(payload.vehicles || []).length) throw new Error(payload.errors.metrolink);
+        metrolinkTripUpdatesByTripId.clear();
+        (payload.tripUpdates || []).forEach(function (tripUpdate) {
+          const tripId = String(tripUpdate.tripId || tripUpdate.id || '');
+          if (tripId) metrolinkTripUpdatesByTripId.set(tripId, tripUpdate);
+        });
         vehicles = (payload.vehicles || []).map(function (vehicle) {
-          return {
+          const mappedVehicle = {
             agency: vehicle.agency || 'metrolink',
             id: vehicle.id,
             label: vehicle.label || vehicle.id,
@@ -1028,9 +1083,19 @@
             bearing: vehicle.bearing ?? null,
             speed: vehicle.speed ?? null,
             direction: vehicle.direction ?? '',
+            currentStopSequence: vehicle.currentStopSequence ?? null,
+            currentStatus: vehicle.currentStatus ?? '',
+            stopId: vehicle.stopId || '',
             delayStatus: vehicle.delayStatus || '',
             timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
           };
+          const tripUpdate = metrolinkTripUpdatesByTripId.get(String(mappedVehicle.tripId || ''));
+          const nextStop = nextStopFromTripUpdate(mappedVehicle, tripUpdate);
+          if (nextStop) {
+            mappedVehicle.nextStopId = nextStop.stopId;
+            mappedVehicle.nextStopTime = nextStop.time;
+          }
+          return mappedVehicle;
         }).filter(function (vehicle) {
           return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude);
         });
