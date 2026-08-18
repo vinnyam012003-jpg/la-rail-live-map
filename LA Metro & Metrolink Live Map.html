@@ -615,6 +615,11 @@
       const seconds = timestamp - Date.now() / 1000;
       if (seconds <= 75) return 'Due';
       const minutes = Math.ceil(seconds / 60);
+      if (minutes > 60) {
+        const hours = Math.floor(minutes / 60);
+        const remainingMinutes = minutes % 60;
+        return hours + ' hr ' + remainingMinutes + ' min';
+      }
       return minutes + ' min';
     }
 
