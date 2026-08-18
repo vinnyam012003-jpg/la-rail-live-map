@@ -26,6 +26,16 @@
       font: 600 16px/1.3 Arial, sans-serif;
     }
 
+    .version-badge {
+      padding: 5px 8px;
+      border: 1px solid rgba(0, 0, 0, 0.16);
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.25);
+      color: #343a40;
+      font: 700 12px/1.2 Arial, sans-serif;
+    }
+
     .live-status {
       min-width: 190px;
       padding: 8px 10px;
@@ -337,6 +347,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
+    const APP_VERSION = 'Beta 2.2';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -418,6 +429,15 @@
       return title;
     };
     titleControl.addTo(map);
+
+    const versionControl = L.control({ position: 'topleft' });
+    versionControl.onAdd = function () {
+      const badge = L.DomUtil.create('div', 'version-badge');
+      badge.textContent = APP_VERSION;
+      badge.setAttribute('aria-label', 'Website version ' + APP_VERSION);
+      return badge;
+    };
+    versionControl.addTo(map);
 
     const metroLineColors = {
       'Metro A Line': '#0072bc',
