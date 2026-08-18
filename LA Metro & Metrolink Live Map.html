@@ -79,7 +79,7 @@
     .train-marker.subway-marker.b-line { background: #e52329; }
     .train-marker.subway-marker.d-line { background: #a05da5; }
     .train-marker.subway-marker svg { width: 18px; height: 18px; display: block; }
-    .train-marker.light-rail-marker { border-radius: 6px; }
+    .train-marker.light-rail-marker { border-radius: 50%; }
     .train-marker.light-rail-marker.a-line { background: #0072bc; }
     .train-marker.light-rail-marker.c-line { background: #58a738; }
     .train-marker.light-rail-marker.e-line { background: #f2a900; }
@@ -135,14 +135,276 @@
       height: 22px;
       border-radius: 2px;
     }
+
+    .sheet-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      background: rgba(15, 23, 31, 0.42);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
+    }
+
+    .map-sheet {
+      position: fixed;
+      left: 50%;
+      bottom: 0;
+      z-index: 2001;
+      width: min(1040px, calc(100% - 48px));
+      max-height: min(72vh, 720px);
+      overflow: hidden;
+      border-radius: 30px 30px 0 0;
+      background: #ffffff;
+      box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.24);
+      transform: translate(-50%, 105%);
+      transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .sheet-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .map-sheet.open { transform: translate(-50%, 0); }
+
+    .sheet-handle-area {
+      position: relative;
+      height: 34px;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .sheet-handle-area::after {
+      content: '';
+      position: absolute;
+      top: 13px;
+      left: 50%;
+      width: 78px;
+      height: 6px;
+      border-radius: 999px;
+      background: #c5cad1;
+      transform: translateX(-50%);
+    }
+
+    .sheet-close {
+      position: absolute;
+      top: 18px;
+      right: 24px;
+      z-index: 1;
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 50%;
+      background: #f0f1f3;
+      color: #4d555d;
+      font: 30px/36px Arial, sans-serif;
+      cursor: pointer;
+    }
+
+    .sheet-scroll {
+      max-height: calc(min(72vh, 720px) - 34px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 8px 48px 42px;
+    }
+
+    .sheet-heading {
+      margin: 2px 56px 22px 0;
+      color: #101820;
+      font: 700 30px/1.2 Arial, sans-serif;
+    }
+
+    .sheet-choice {
+      display: grid;
+      grid-template-columns: 58px 1fr 28px;
+      gap: 16px;
+      align-items: center;
+      width: 100%;
+      margin: 0 0 14px;
+      padding: 15px 18px;
+      border: 1px solid #dfe2e5;
+      border-radius: 18px;
+      background: #ffffff;
+      color: #101820;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .sheet-choice:hover,
+    .sheet-choice:focus-visible { background: #f6f8f9; }
+
+    .sheet-choice-icon {
+      display: grid;
+      width: 52px;
+      height: 52px;
+      place-items: center;
+    }
+
+    .sheet-choice-icon .train-hitbox {
+      width: 52px;
+      height: 52px;
+    }
+
+    .sheet-choice-icon .train-marker {
+      width: 30px;
+      height: 30px;
+    }
+
+    .station-sheet-icon {
+      display: grid;
+      box-sizing: border-box;
+      width: 48px;
+      height: 48px;
+      place-items: center;
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      background: #343a40;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.35), 0 0 0 1px #343a40;
+      color: #ffffff;
+    }
+
+    .station-sheet-icon svg { width: 34px; height: 34px; display: block; }
+
+    .sheet-choice-title {
+      display: block;
+      font: 700 18px/1.25 Arial, sans-serif;
+    }
+
+    .sheet-choice-subtitle {
+      display: block;
+      margin-top: 3px;
+      color: #68717a;
+      font: 15px/1.3 Arial, sans-serif;
+    }
+
+    .sheet-choice-chevron {
+      color: #087b8b;
+      font: 36px/1 Arial, sans-serif;
+      text-align: right;
+    }
+
+    .sheet-back {
+      margin: 0 0 14px;
+      padding: 6px 0;
+      border: 0;
+      background: transparent;
+      color: #087b8b;
+      font: 700 15px/1.2 Arial, sans-serif;
+      cursor: pointer;
+    }
+
+    .sheet-detail {
+      color: #20272d;
+      font: 16px/1.55 Arial, sans-serif;
+    }
+
+    .sheet-detail > strong:first-child { font-size: 24px; }
+    .sheet-detail .arrival-board { max-width: none; }
+
+    @media (max-width: 700px) {
+      .map-sheet {
+        width: calc(100% - 12px);
+        max-height: 82vh;
+        border-radius: 24px 24px 0 0;
+      }
+
+      .sheet-scroll {
+        max-height: calc(82vh - 34px);
+        padding: 6px 18px 28px;
+      }
+
+      .sheet-heading { margin-bottom: 18px; font-size: 25px; }
+      .sheet-close { top: 16px; right: 16px; }
+      .sheet-choice { grid-template-columns: 54px 1fr 22px; gap: 12px; padding: 13px 14px; }
+      .sheet-choice-title { font-size: 17px; }
+      .sheet-choice-subtitle { font-size: 14px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .map-sheet, .sheet-backdrop { transition: none; }
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
+  <div id="sheetBackdrop" class="sheet-backdrop" aria-hidden="true"></div>
+  <section id="mapSheet" class="map-sheet" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="sheetHeading">
+    <div id="sheetHandle" class="sheet-handle-area" aria-hidden="true"></div>
+    <button id="sheetClose" class="sheet-close" type="button" aria-label="Close">&times;</button>
+    <div id="sheetContent" class="sheet-scroll"></div>
+  </section>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     const map = L.map('map').setView([34.05, -118.25], 10);
+    const sheetBackdrop = document.getElementById('sheetBackdrop');
+    const mapSheet = document.getElementById('mapSheet');
+    const sheetHandle = document.getElementById('sheetHandle');
+    const sheetClose = document.getElementById('sheetClose');
+    const sheetContent = document.getElementById('sheetContent');
+    let sheetGeneration = 0;
+    let sheetBackAction = null;
+
+    function openSheet(content, backAction) {
+      sheetGeneration += 1;
+      sheetBackAction = backAction || null;
+      sheetContent.innerHTML = content;
+      sheetContent.scrollTop = 0;
+      sheetBackdrop.classList.add('open');
+      mapSheet.classList.add('open');
+      sheetBackdrop.setAttribute('aria-hidden', 'false');
+      mapSheet.setAttribute('aria-hidden', 'false');
+      wireSheetBackButton();
+    }
+
+    function updateSheetContent(content) {
+      sheetContent.innerHTML = content;
+      wireSheetBackButton();
+    }
+
+    function wireSheetBackButton() {
+      const backButton = sheetContent.querySelector('[data-sheet-back]');
+      if (backButton && sheetBackAction) backButton.addEventListener('click', sheetBackAction);
+    }
+
+    function closeSheet() {
+      sheetGeneration += 1;
+      sheetBackAction = null;
+      sheetBackdrop.classList.remove('open');
+      mapSheet.classList.remove('open');
+      sheetBackdrop.setAttribute('aria-hidden', 'true');
+      mapSheet.setAttribute('aria-hidden', 'true');
+      mapSheet.style.transform = '';
+    }
+
+    sheetBackdrop.addEventListener('click', closeSheet);
+    sheetClose.addEventListener('click', closeSheet);
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && mapSheet.classList.contains('open')) closeSheet();
+    });
+
+    L.DomEvent.disableClickPropagation(mapSheet);
+    L.DomEvent.disableScrollPropagation(mapSheet);
+
+    let sheetDragStart = null;
+    sheetHandle.addEventListener('pointerdown', function (event) {
+      sheetDragStart = event.clientY;
+      sheetHandle.setPointerCapture(event.pointerId);
+    });
+    sheetHandle.addEventListener('pointermove', function (event) {
+      if (sheetDragStart === null) return;
+      const distance = Math.max(0, event.clientY - sheetDragStart);
+      mapSheet.style.transform = 'translate(-50%, ' + distance + 'px)';
+    });
+    sheetHandle.addEventListener('pointerup', function (event) {
+      if (sheetDragStart === null) return;
+      const distance = Math.max(0, event.clientY - sheetDragStart);
+      sheetDragStart = null;
+      sheetHandle.releasePointerCapture(event.pointerId);
+      if (distance > 110) closeSheet();
+      else mapSheet.style.transform = '';
+    });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       maxZoom: 20,
@@ -309,6 +571,7 @@
     let metrolinkScheduleCache = [];
     let metrolinkScheduleFetchedAt = 0;
     const stationLayer = L.layerGroup().addTo(map);
+    const stationEntries = [];
 
     const stationRecords = [
       ...metroStations.map((station) => ({ ...station, agency: 'Metro', mode: 'rail' })),
@@ -414,18 +677,16 @@
         : /7th Street \/ Metro Center/i.test(name)
           ? 'metro-center'
           : isShared ? 'square' : 'circle';
-      const popup = stationPopupHeader(name, services) +
-        '<div class="arrival-board"><div class="arrival-note">Click to load upcoming arrivals…</div></div>';
-
       const stationMarker = L.marker([cluster.latitude, cluster.longitude], {
         icon: stationIcon(shape),
         keyboard: true,
         title: name
       })
-        .bindPopup(popup)
         .addTo(stationLayer);
-      stationMarker.on('popupopen', function () {
-        updateStationArrivals(stationMarker, cluster, name, services);
+      const stationEntry = { marker: stationMarker, cluster: cluster, name: name, services: services };
+      stationEntries.push(stationEntry);
+      stationMarker.on('click', function () {
+        openStationOrOverlap(stationEntry);
       });
     });
 
@@ -908,6 +1169,118 @@
       return '<span class="train-delay-dot ' + delayClass + '" title="' + label + '"></span>';
     }
 
+    function stationSheetIcon() {
+      return '<span class="station-sheet-icon" aria-hidden="true">' +
+        '<svg viewBox="0 0 48 48"><path d="M8 18h32L24 8 8 18zm4 3v15H9v4h30v-4h-3V21h-5v15h-5V21h-5v15h-5V21h-4z" fill="currentColor"/>' +
+        '<circle cx="24" cy="14" r="3.2" fill="#343a40"/><path d="M24 12.2v2.1l1.5 1" fill="none" stroke="white" stroke-width="1.1" stroke-linecap="round"/></svg></span>';
+    }
+
+    function vehicleSheetIcon(vehicle) {
+      return trainIcon(vehicle).options.html;
+    }
+
+    function vehicleDisplayName(vehicle) {
+      if (vehicle.agency === 'metrolink') return 'Metrolink train ' + escapeHtml(vehicle.label || vehicle.id);
+      if (vehicle.agency === 'amtrak') return 'Amtrak train ' + escapeHtml(vehicle.label || vehicle.id);
+      return 'LA Metro ' + escapeHtml(metroLineName(vehicle.routeId)) + ' Line vehicle';
+    }
+
+    function sheetBackButton() {
+      return sheetBackAction ? '<button type="button" class="sheet-back" data-sheet-back>&larr; Back</button>' : '';
+    }
+
+    function overlappingVehicles(stationEntry) {
+      const stationPoint = map.latLngToContainerPoint(stationEntry.marker.getLatLng());
+      return Array.from(trainMarkers.values()).filter(function (marker) {
+        if (!marker.vehicle) return false;
+        return stationPoint.distanceTo(map.latLngToContainerPoint(marker.getLatLng())) <= 28;
+      }).map((marker) => marker.vehicle);
+    }
+
+    function overlappingStation(trainMarker) {
+      const trainPoint = map.latLngToContainerPoint(trainMarker.getLatLng());
+      let closest = null;
+      let closestDistance = Infinity;
+      stationEntries.forEach(function (entry) {
+        const distance = trainPoint.distanceTo(map.latLngToContainerPoint(entry.marker.getLatLng()));
+        if (distance <= 28 && distance < closestDistance) {
+          closest = entry;
+          closestDistance = distance;
+        }
+      });
+      return closest;
+    }
+
+    function showOverlapChooser(stationEntry, vehicles) {
+      let content = '<h2 id="sheetHeading" class="sheet-heading">Choose what to view</h2>' +
+        '<button type="button" class="sheet-choice" data-choice-station>' +
+        '<span class="sheet-choice-icon">' + stationSheetIcon() + '</span>' +
+        '<span><span class="sheet-choice-title">' + escapeHtml(stationEntry.name) + '</span>' +
+        '<span class="sheet-choice-subtitle">View station arrivals</span></span>' +
+        '<span class="sheet-choice-chevron" aria-hidden="true">&rsaquo;</span></button>';
+
+      vehicles.forEach(function (vehicle, index) {
+        content += '<button type="button" class="sheet-choice" data-choice-vehicle="' + index + '">' +
+          '<span class="sheet-choice-icon">' + vehicleSheetIcon(vehicle) + '</span>' +
+          '<span><span class="sheet-choice-title">' + vehicleDisplayName(vehicle) + '</span>' +
+          '<span class="sheet-choice-subtitle">View train details</span></span>' +
+          '<span class="sheet-choice-chevron" aria-hidden="true">&rsaquo;</span></button>';
+      });
+
+      openSheet(content);
+      const reopenChooser = function () { showOverlapChooser(stationEntry, vehicles); };
+      sheetContent.querySelector('[data-choice-station]').addEventListener('click', function () {
+        showStationDetails(stationEntry, reopenChooser);
+      });
+      sheetContent.querySelectorAll('[data-choice-vehicle]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          showVehicleDetails(vehicles[Number(button.dataset.choiceVehicle)], reopenChooser);
+        });
+      });
+    }
+
+    function showStationDetails(stationEntry, backAction) {
+      const loading = (backAction ? '<button type="button" class="sheet-back" data-sheet-back>&larr; Back</button>' : '') +
+        '<div class="sheet-detail">' + stationPopupHeader(stationEntry.name, stationEntry.services) +
+        '<div class="arrival-board"><div class="arrival-note">Loading upcoming arrivals…</div></div></div>';
+      openSheet(loading, backAction);
+      const generation = sheetGeneration;
+      const sheetMarker = {
+        isPopupOpen: function () {
+          return mapSheet.classList.contains('open') && sheetGeneration === generation;
+        },
+        setPopupContent: function (content) {
+          if (!this.isPopupOpen()) return;
+          updateSheetContent(sheetBackButton() + '<div class="sheet-detail">' + content + '</div>');
+        }
+      };
+      updateStationArrivals(sheetMarker, stationEntry.cluster, stationEntry.name, stationEntry.services);
+    }
+
+    function showVehicleDetails(vehicle, backAction) {
+      const content = (backAction ? '<button type="button" class="sheet-back" data-sheet-back>&larr; Back</button>' : '') +
+        '<div class="sheet-choice-icon" style="margin-bottom:10px">' + vehicleSheetIcon(vehicle) + '</div>' +
+        '<div class="sheet-detail">' + popupFor(vehicle) + '</div>';
+      openSheet(content, backAction);
+    }
+
+    function openStationOrOverlap(stationEntry) {
+      const vehicles = overlappingVehicles(stationEntry);
+      if (vehicles.length) showOverlapChooser(stationEntry, vehicles);
+      else showStationDetails(stationEntry);
+    }
+
+    function openVehicleOrOverlap(marker) {
+      const stationEntry = overlappingStation(marker);
+      if (stationEntry) {
+        const vehicles = overlappingVehicles(stationEntry);
+        if (!vehicles.some((vehicle) => vehicle === marker.vehicle)) vehicles.push(marker.vehicle);
+        showOverlapChooser(stationEntry, vehicles);
+      } else {
+        showVehicleDetails(marker.vehicle);
+      }
+    }
+
     function popupFor(vehicle) {
       const title = vehicle.agency === 'metro' ? 'LA Metro ' + metroLineName(vehicle.routeId) + ' Line'
         : vehicle.agency === 'amtrak' ? 'Amtrak train'
@@ -948,6 +1321,9 @@
           icon: trainIcon(vehicle),
           zIndexOffset: 1000
         }).addTo(trainLayer);
+        marker.on('click', function () {
+          openVehicleOrOverlap(marker);
+        });
         trainMarkers.set(markerId, marker);
         agencyMarkerIds[vehicle.agency].add(markerId);
       } else {
@@ -955,8 +1331,8 @@
         marker.setIcon(trainIcon(vehicle));
       }
 
+      marker.vehicle = vehicle;
       marker.vehicleTimestamp = vehicle.timestamp || Math.floor(Date.now() / 1000);
-      marker.bindPopup(popupFor(vehicle));
       lastLiveUpdate = new Date();
       updateLiveStatus();
     }
