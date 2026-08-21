@@ -104,6 +104,16 @@
     .arrival-destination { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .arrival-time { font-weight: 700; white-space: nowrap; }
     .arrival-note { color: #666; font-size: 12px; margin-top: 5px; }
+    .scheduled-destination { margin-top: 9px; color: #20272d; font-weight: 700; }
+    .scheduled-time-row,
+    .upcoming-stop-row {
+      display: grid;
+      grid-template-columns: minmax(92px, max-content) minmax(130px, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 4px 0;
+    }
+    .upcoming-stop-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .station-icon {
       border: 0;
@@ -347,7 +357,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.49';
+    const APP_VERSION = 'Beta 1.50';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -978,6 +988,45 @@
       };
     }
 
+    function upcomingStopsForTrain(vehicle) {
+      if (!vehicle.tripId) return [];
+      const tripUpdate = vehicle.agency === 'metro'
+        ? metroTripUpdatesByTripId.get(String(vehicle.tripId))
+        : vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak'
+          ? metrolinkTripUpdatesByTripId.get(String(vehicle.tripId))
+          : null;
+      if (!tripUpdate || !Array.isArray(tripUpdate.stopTimeUpdates)) return [];
+
+      const now = Date.now() / 1000;
+      const currentSequence = Number(vehicle.currentStopSequence);
+      const currentStopId = String(vehicle.stopId || '');
+      const seen = new Set();
+      return tripUpdate.stopTimeUpdates
+        .map(function (stopUpdate) {
+          const time = Number(stopUpdate.arrivalTime || stopUpdate.departureTime);
+          const stopId = String(stopUpdate.stopId || '');
+          return {
+            stopId: stopId,
+            stopSequence: Number(stopUpdate.stopSequence),
+            name: vehicle.agency === 'metro' ? metroStopName(stopId) : metrolinkStopName(stopId),
+            time: time
+          };
+        })
+        .filter(function (stopUpdate) {
+          if (!stopUpdate.stopId || !Number.isFinite(stopUpdate.time) || stopUpdate.time < now - 30) return false;
+          if (Number.isFinite(currentSequence) && currentSequence > 0 &&
+            Number.isFinite(stopUpdate.stopSequence) && stopUpdate.stopSequence < currentSequence) return false;
+          if (currentStopId && stopUpdate.stopId === currentStopId && stopUpdate.time < now + 45) return false;
+          const key = stopUpdate.stopId + ':' + Math.floor(stopUpdate.time / 60);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort(function (first, second) {
+          return first.time - second.time;
+        });
+    }
+
     function nextStopFromTripUpdate(vehicle, tripUpdate) {
       if (!tripUpdate || !Array.isArray(tripUpdate.stopTimeUpdates)) return null;
       const now = Date.now() / 1000;
@@ -1132,9 +1181,30 @@
     }
 
     function scheduledRows(rows, labelFunction) {
-      return rows.slice(0, 6).map(function (arrival) {
-        return arrivalRow(labelFunction(arrival), arrival.destination || 'Scheduled train', arrival.time, formatScheduledClockTime);
-      }).join('');
+      const groups = new Map();
+      rows.forEach(function (arrival) {
+        const destination = arrival.destination || 'Scheduled train';
+        if (!groups.has(destination)) groups.set(destination, []);
+        groups.get(destination).push(arrival);
+      });
+
+      return Array.from(groups.entries())
+        .sort(function (first, second) {
+          return first[0].localeCompare(second[0]);
+        })
+        .map(function ([destination, arrivals]) {
+          return '<div class="arrival-note scheduled-destination">to ' + escapeHtml(destination) + '</div>' +
+            arrivals
+              .sort(function (first, second) { return first.time - second.time; })
+              .slice(0, 6)
+              .map(function (arrival) {
+                return '<div class="scheduled-time-row">' +
+                  '<span class="arrival-line">' + escapeHtml(labelFunction(arrival)) + '</span>' +
+                  '<span></span>' +
+                  '<span class="arrival-time">' + formatScheduledClockTime(arrival.time) + '</span>' +
+                  '</div>';
+              }).join('');
+        }).join('');
     }
 
     async function updateStationArrivals(marker, cluster, name, services) {
@@ -1405,14 +1475,26 @@
         : 'Unknown';
       const destination = destinationForTrain(vehicle);
       const nextStop = nextStopForTrain(vehicle);
+      const upcomingStops = upcomingStopsForTrain(vehicle);
+      const upcomingStopList = upcomingStops.length
+        ? '<div class="arrival-heading">Upcoming stops</div>' +
+          upcomingStops.map(function (stop) {
+            return '<div class="upcoming-stop-row">' +
+              '<span></span>' +
+              '<span class="upcoming-stop-name">' + escapeHtml(stop.name) + '</span>' +
+              '<span class="arrival-time">' + formatArrivalTime(stop.time) + '</span>' +
+              '</div>';
+          }).join('')
+        : '';
       return '<strong>' + escapeHtml(title) + '</strong><br>' +
         'Route: ' + (vehicle.routeId || 'Unknown') + '<br>' +
-        'Vehicle: ' + (vehicle.label || vehicle.id) + '<br>' +
-        (destination ? 'To: ' + destination + '<br>' : '') +
+        'Vehicle: ' + escapeHtml(vehicle.label || vehicle.id) + '<br>' +
+        (destination ? 'To: ' + escapeHtml(destination) + '<br>' : '') +
         (nextStop ? 'Next station: ' + escapeHtml(nextStop.name) + '<br>' +
           'Arrives in: ' + formatArrivalTime(nextStop.time) + '<br>' : '') +
-        (vehicle.delayStatus ? 'Status: ' + vehicle.delayStatus + '<br>' : '') +
-        'Updated: ' + updated;
+        (vehicle.delayStatus ? 'Status: ' + escapeHtml(vehicle.delayStatus) + '<br>' : '') +
+        'Updated: ' + updated +
+        upcomingStopList;
     }
 
     function updateLiveStatus() {
