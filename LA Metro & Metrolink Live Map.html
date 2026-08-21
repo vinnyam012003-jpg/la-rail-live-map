@@ -347,7 +347,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 2.2';
+    const APP_VERSION = 'Beta 1.48';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -430,7 +430,7 @@
     };
     titleControl.addTo(map);
 
-    const versionControl = L.control({ position: 'topleft' });
+    const versionControl = L.control({ position: 'bottomleft' });
     versionControl.onAdd = function () {
       const badge = L.DomUtil.create('div', 'version-badge');
       badge.textContent = APP_VERSION;
@@ -1077,9 +1077,63 @@
       return Array.from(nextByDirection.values()).sort((first, second) => first.time - second.time);
     }
 
+    function scheduleQueryValues(cluster, name) {
+      const metroStopIds = new Set();
+      const metrolinkStopIds = new Set();
+      const names = new Set([name]);
+
+      cluster.records.forEach(function (record) {
+        if (record.name) names.add(record.name);
+        if (record.agency === 'Metro' && record.mode === 'rail' && record.id) {
+          metroStopIds.add(String(record.id));
+          metroStopIds.add(String(record.id).replace(/S$/, ''));
+        }
+        if (record.agency === 'Metrolink' && record.id) {
+          metrolinkStopIds.add(String(record.id));
+        }
+      });
+
+      return {
+        metroStopIds: Array.from(metroStopIds),
+        metrolinkStopIds: Array.from(metrolinkStopIds),
+        names: Array.from(names).filter(Boolean)
+      };
+    }
+
+    async function fetchStationSchedule(cluster, name) {
+      const values = scheduleQueryValues(cluster, name);
+      const parameters = new URLSearchParams();
+      if (values.metroStopIds.length) parameters.set('metroStopIds', values.metroStopIds.join(','));
+      if (values.metrolinkStopIds.length) parameters.set('metrolinkStopIds', values.metrolinkStopIds.join(','));
+      if (values.names.length) parameters.set('names', values.names.join(','));
+
+      if (!parameters.toString()) return { schedules: { metro: [], metrolink: [] }, errors: {} };
+
+      const response = await fetch('/api/station-schedule?' + parameters.toString(), { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Station schedule returned HTTP ' + response.status);
+      return payload;
+    }
+
+    function scheduledMetroLineLabel(arrival) {
+      return metroLineName(arrival.routeId || arrival.line) + ' Line';
+    }
+
+    function scheduledMetrolinkLineLabel(arrival) {
+      const line = String(arrival.line || arrival.routeId || 'Metrolink').replace(/\s+LINE$/i, '');
+      return /metrolink/i.test(line) ? line : 'Metrolink ' + line;
+    }
+
+    function scheduledRows(rows, labelFunction) {
+      return rows.slice(0, 6).map(function (arrival) {
+        return arrivalRow(labelFunction(arrival), arrival.destination || 'Scheduled train', arrival.time);
+      }).join('');
+    }
+
     async function updateStationArrivals(marker, cluster, name, services) {
       const hasMetro = cluster.records.some((record) => record.agency === 'Metro');
       const hasMetrolink = cluster.records.some((record) => record.agency === 'Metrolink');
+      const hasMetroRail = cluster.records.some((record) => record.agency === 'Metro' && record.mode === 'rail');
       marker.setPopupContent(stationPopupHeader(name, services) +
         '<div class="arrival-board"><div class="arrival-note">Loading upcoming arrivals…</div></div>');
       const metroArrivals = hasMetro ? metroArrivalsForCluster(cluster) : [];
@@ -1091,6 +1145,13 @@
         } catch (error) {
           metrolinkError = error.message;
         }
+      }
+      let stationSchedule = { schedules: { metro: [], metrolink: [] }, errors: {} };
+      let stationScheduleError = '';
+      try {
+        stationSchedule = await fetchStationSchedule(cluster, name);
+      } catch (error) {
+        stationScheduleError = error.message;
       }
       let board = '<div class="arrival-board">';
       if (hasMetro) {
@@ -1107,7 +1168,26 @@
           ? metrolinkArrivals.map((arrival) => arrivalRow(arrival.line, arrival.destination, arrival.time)).join('')
           : '<div class="arrival-note">' + escapeHtml(metrolinkError || 'No upcoming trains found.') + '</div>';
       }
-      board += '<div class="arrival-note">Times update automatically from agency feeds.</div></div>';
+      if (hasMetroRail || hasMetrolink) {
+        const scheduledMetro = stationSchedule.schedules?.metro || [];
+        const scheduledMetrolink = stationSchedule.schedules?.metrolink || [];
+        board += '<div class="arrival-heading">Scheduled times</div>';
+
+        if (hasMetroRail) {
+          board += '<div class="arrival-note">LA Metro rail schedule</div>';
+          board += scheduledMetro.length
+            ? scheduledRows(scheduledMetro, scheduledMetroLineLabel)
+            : '<div class="arrival-note">' + escapeHtml(stationSchedule.errors?.metro || stationScheduleError || 'No Metro scheduled trips found soon.') + '</div>';
+        }
+
+        if (hasMetrolink) {
+          board += '<div class="arrival-note">Metrolink schedule</div>';
+          board += scheduledMetrolink.length
+            ? scheduledRows(scheduledMetrolink, scheduledMetrolinkLineLabel)
+            : '<div class="arrival-note">' + escapeHtml(stationSchedule.errors?.metrolink || stationScheduleError || 'No Metrolink scheduled trips found soon.') + '</div>';
+        }
+      }
+      board += '<div class="arrival-note">Live times update from agency feeds. Scheduled times come from static GTFS and may not include delays.</div></div>';
       if (marker.isPopupOpen()) marker.setPopupContent(stationPopupHeader(name, services) + board);
     }
 
