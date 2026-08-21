@@ -27,14 +27,14 @@ const metroFeeds = {
       'https://api.goswift.ly/real-time/lametro/gtfs-rt-vehicle-positions',
       'https://api.goswift.ly/real-time/lametro-rail/gtfs-rt-vehicle-positions'
     ],
-    cacheMs: 20000
+    cacheMs: 35000
   },
   tripUpdates: {
     urls: [
       'https://api.goswift.ly/real-time/lametro/gtfs-rt-trip-updates',
       'https://api.goswift.ly/real-time/lametro-rail/gtfs-rt-trip-updates'
     ],
-    cacheMs: 40000
+    cacheMs: 70000
   }
 };
 const metroCache = {

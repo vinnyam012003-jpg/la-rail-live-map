@@ -99,7 +99,7 @@
 
     .arrival-board { min-width: 255px; max-width: 330px; margin-top: 8px; }
     .arrival-heading { margin: 7px 0 3px; font-weight: 700; border-top: 1px solid #ddd; padding-top: 6px; }
-    .arrival-row { display: grid; grid-template-columns: 54px 1fr auto; gap: 7px; align-items: center; padding: 4px 0; }
+    .arrival-row { display: grid; grid-template-columns: minmax(92px, max-content) minmax(130px, 1fr) auto; gap: 16px; align-items: center; padding: 4px 0; }
     .arrival-line { font-weight: 700; }
     .arrival-destination { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .arrival-time { font-weight: 700; white-space: nowrap; }
@@ -347,7 +347,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.48';
+    const APP_VERSION = 'Beta 1.49';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -904,11 +904,18 @@
       return minutes + ' min';
     }
 
-    function arrivalRow(line, destination, timestamp) {
+    function formatScheduledClockTime(timestamp) {
+      return new Date(timestamp * 1000).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit'
+      });
+    }
+
+    function arrivalRow(line, destination, timestamp, timeFormatter = formatArrivalTime) {
       return '<div class="arrival-row">' +
         '<span class="arrival-line">' + escapeHtml(line) + '</span>' +
         '<span class="arrival-destination">to ' + escapeHtml(destination) + '</span>' +
-        '<span class="arrival-time">' + formatArrivalTime(timestamp) + '</span>' +
+        '<span class="arrival-time">' + timeFormatter(timestamp) + '</span>' +
         '</div>';
     }
 
@@ -1126,7 +1133,7 @@
 
     function scheduledRows(rows, labelFunction) {
       return rows.slice(0, 6).map(function (arrival) {
-        return arrivalRow(labelFunction(arrival), arrival.destination || 'Scheduled train', arrival.time);
+        return arrivalRow(labelFunction(arrival), arrival.destination || 'Scheduled train', arrival.time, formatScheduledClockTime);
       }).join('');
     }
 
@@ -1285,6 +1292,14 @@
       return 'LA Metro ' + escapeHtml(metroLineName(vehicle.routeId)) + ' Line vehicle';
     }
 
+    function vehicleChoiceSubtitle(vehicle) {
+      const destination = destinationForTrain(vehicle);
+      const nextStop = nextStopForTrain(vehicle);
+      if (destination) return 'To ' + escapeHtml(destination);
+      if (nextStop?.name) return 'Next station: ' + escapeHtml(nextStop.name);
+      return 'View train details';
+    }
+
     function sheetBackButton() {
       return sheetBackAction ? '<button type="button" class="sheet-back" data-sheet-back>&larr; Back</button>' : '';
     }
@@ -1323,7 +1338,7 @@
         content += '<button type="button" class="sheet-choice" data-choice-vehicle="' + index + '">' +
           '<span class="sheet-choice-icon">' + vehicleSheetIcon(vehicle) + '</span>' +
           '<span><span class="sheet-choice-title">' + vehicleDisplayName(vehicle) + '</span>' +
-          '<span class="sheet-choice-subtitle">View train details</span></span>' +
+          '<span class="sheet-choice-subtitle">' + vehicleChoiceSubtitle(vehicle) + '</span></span>' +
           '<span class="sheet-choice-chevron" aria-hidden="true">&rsaquo;</span></button>';
       });
 
