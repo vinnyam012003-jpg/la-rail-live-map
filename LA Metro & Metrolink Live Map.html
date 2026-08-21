@@ -104,11 +104,12 @@
     .arrival-destination { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .arrival-time { font-weight: 700; white-space: nowrap; }
     .arrival-note { color: #666; font-size: 12px; margin-top: 5px; }
+    .arrival-track { color: #555; font-size: 12px; font-weight: 700; white-space: nowrap; }
     .scheduled-destination { margin-top: 9px; color: #20272d; font-weight: 700; }
     .scheduled-time-row,
     .upcoming-stop-row {
       display: grid;
-      grid-template-columns: minmax(92px, max-content) minmax(130px, 1fr) auto;
+      grid-template-columns: minmax(92px, max-content) minmax(130px, 1fr) minmax(62px, max-content) auto;
       gap: 16px;
       align-items: center;
       padding: 4px 0;
@@ -172,7 +173,7 @@
       bottom: 0;
       z-index: 2001;
       width: min(1040px, calc(100% - 48px));
-      max-height: min(72vh, 720px);
+      max-height: min(70vh, 700px);
       overflow: hidden;
       border-radius: 30px 30px 0 0;
       background: #ffffff;
@@ -223,10 +224,10 @@
     }
 
     .sheet-scroll {
-      max-height: calc(min(72vh, 720px) - 34px);
+      max-height: calc(min(70vh, 700px) - 34px);
       overflow-y: auto;
       overscroll-behavior: contain;
-      padding: 8px 48px 42px;
+      padding: 8px 48px max(86px, calc(60px + env(safe-area-inset-bottom, 0px)));
     }
 
     .sheet-heading {
@@ -325,13 +326,13 @@
     @media (max-width: 700px) {
       .map-sheet {
         width: calc(100% - 12px);
-        max-height: 82vh;
+        max-height: 78vh;
         border-radius: 24px 24px 0 0;
       }
 
       .sheet-scroll {
-        max-height: calc(82vh - 34px);
-        padding: 6px 18px 28px;
+        max-height: calc(78vh - 34px);
+        padding: 6px 18px max(92px, calc(64px + env(safe-area-inset-bottom, 0px)));
       }
 
       .sheet-heading { margin-bottom: 18px; font-size: 25px; }
@@ -357,7 +358,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.50';
+    const APP_VERSION = 'Beta 1.51';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -440,7 +441,7 @@
     };
     titleControl.addTo(map);
 
-    const versionControl = L.control({ position: 'bottomleft' });
+    const versionControl = L.control({ position: 'bottomright' });
     versionControl.onAdd = function () {
       const badge = L.DomUtil.create('div', 'version-badge');
       badge.textContent = APP_VERSION;
@@ -538,7 +539,7 @@
           color: metroLineColors[properties.LABEL] || '#555555',
           weight: 5,
           opacity: properties.STATUS === 'Construction' ? 0.55 : 0.9,
-          dashArray: properties.STATUS === 'Construction' ? '8 8' : null
+          dashArray: properties.STATUS === 'Construction' && properties.LABEL !== 'Metro D Line' ? '8 8' : null
         };
       },
       onEachFeature: function (feature, layer) {
@@ -921,10 +922,11 @@
       });
     }
 
-    function arrivalRow(line, destination, timestamp, timeFormatter = formatArrivalTime) {
+    function arrivalRow(line, destination, timestamp, timeFormatter = formatArrivalTime, track = '') {
       return '<div class="arrival-row">' +
         '<span class="arrival-line">' + escapeHtml(line) + '</span>' +
-        '<span class="arrival-destination">to ' + escapeHtml(destination) + '</span>' +
+        '<span class="arrival-destination">to ' + escapeHtml(destination) +
+        (track ? ' <span class="arrival-track">' + escapeHtml(track) + '</span>' : '') + '</span>' +
         '<span class="arrival-time">' + timeFormatter(timestamp) + '</span>' +
         '</div>';
     }
@@ -937,6 +939,45 @@
     function metrolinkStopName(stopId) {
       const id = String(stopId || '');
       return metrolinkStopNames.get(id) || id;
+    }
+
+    function trainScheduleDesignation(vehicle) {
+      return String(vehicle.label || vehicle.id || '').trim().toUpperCase();
+    }
+
+    function trackStationWords(value) {
+      const normalized = String(value || '').toLowerCase()
+        .replace(/\bl\.?\s*a\.?\s*union station\b/g, 'laus')
+        .replace(/\bla union station\b/g, 'laus')
+        .replace(/\bunion station\b/g, 'laus')
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, ' ');
+      const ignored = new Set(['station', 'platform', 'line', 'upper', 'level', 'the', 'metrolink']);
+      return new Set(normalized.trim().split(/\s+/).filter((word) => word && !ignored.has(word)));
+    }
+
+    function trackStationNamesMatch(first, second) {
+      const firstText = String(first || '');
+      const secondText = String(second || '');
+      if (!firstText || !secondText) return false;
+      if (/(union|laus)/i.test(firstText) && /(union|laus)/i.test(secondText)) return true;
+      const firstWords = trackStationWords(firstText);
+      const secondWords = trackStationWords(secondText);
+      if (!firstWords.size || !secondWords.size) return false;
+      let overlap = 0;
+      firstWords.forEach((word) => { if (secondWords.has(word)) overlap += 1; });
+      return overlap / Math.min(firstWords.size, secondWords.size) >= 0.6;
+    }
+
+    function trackForMetrolinkStop(vehicle, stopName, schedule) {
+      if (!Array.isArray(schedule) || (vehicle.agency !== 'metrolink' && vehicle.agency !== 'amtrak')) return '';
+      const designation = trainScheduleDesignation(vehicle);
+      if (!designation || !stopName) return '';
+      const match = schedule.find(function (item) {
+        return String(item.TrainDesignation || '').trim().toUpperCase() === designation &&
+          trackStationNamesMatch(stopName, item.PlatformName);
+      });
+      return match?.FormattedTrackDesignation || '';
     }
 
     function nextStopForTrain(vehicle) {
@@ -988,7 +1029,7 @@
       };
     }
 
-    function upcomingStopsForTrain(vehicle) {
+    function upcomingStopsForTrain(vehicle, metrolinkSchedule = []) {
       if (!vehicle.tripId) return [];
       const tripUpdate = vehicle.agency === 'metro'
         ? metroTripUpdatesByTripId.get(String(vehicle.tripId))
@@ -1005,10 +1046,12 @@
         .map(function (stopUpdate) {
           const time = Number(stopUpdate.arrivalTime || stopUpdate.departureTime);
           const stopId = String(stopUpdate.stopId || '');
+          const name = vehicle.agency === 'metro' ? metroStopName(stopId) : metrolinkStopName(stopId);
           return {
             stopId: stopId,
             stopSequence: Number(stopUpdate.stopSequence),
-            name: vehicle.agency === 'metro' ? metroStopName(stopId) : metrolinkStopName(stopId),
+            name: name,
+            track: trackForMetrolinkStop(vehicle, name, metrolinkSchedule),
             time: time
           };
         })
@@ -1125,12 +1168,53 @@
         const time = parseMetrolinkScheduleTime(item.TrainMovementTime);
         if (!Number.isFinite(time) || time < now - 30 || time > now + 21600) return;
         const destination = item.TrainDestination || 'Unknown destination';
-        const line = String(item.RouteCode || 'Metrolink').replace(/\s+LINE$/i, '');
+        const operator = /^A/i.test(String(item.TrainDesignation || '')) ? 'Amtrak' : 'Metrolink';
+        const line = operator + ' ' + String(item.RouteCode || '').replace(/\s+LINE$/i, '').trim();
         const key = line + ':' + destination;
-        const prediction = { line: line, destination: destination, time: time };
+        const prediction = {
+          line: line,
+          destination: destination,
+          time: time,
+          operator: operator,
+          trainDesignation: item.TrainDesignation || '',
+          track: item.FormattedTrackDesignation || ''
+        };
         if (!nextByDirection.has(key) || time < nextByDirection.get(key).time) nextByDirection.set(key, prediction);
       });
       return Array.from(nextByDirection.values()).sort((first, second) => first.time - second.time);
+    }
+
+    function metrolinkScheduleRowsForCluster(cluster, schedule) {
+      const names = cluster.records.filter((record) => record.agency === 'Metrolink')
+        .map((record) => record.name);
+      const now = Date.now() / 1000;
+      let matching = schedule.filter(function (item) {
+        return names.some((name) => stationNamesMatch(name, item.PlatformName));
+      });
+      const arrivals = matching.filter((item) => /arrival/i.test(String(item.EventType || '')));
+      if (arrivals.length) matching = arrivals;
+
+      return matching
+        .map(function (item) {
+          const time = parseMetrolinkScheduleTime(item.TrainMovementTime);
+          const destination = item.TrainDestination || 'Unknown destination';
+          const operator = /^A/i.test(String(item.TrainDesignation || '')) ? 'Amtrak' : 'Metrolink';
+          const line = String(item.RouteCode || 'Metrolink').replace(/\s+LINE$/i, '');
+          return {
+            line: line,
+            destination: destination,
+            time: time,
+            operator: operator,
+            trainDesignation: item.TrainDesignation || '',
+            track: item.FormattedTrackDesignation || ''
+          };
+        })
+        .filter(function (arrival) {
+          return Number.isFinite(arrival.time) && arrival.time >= now - 30 && arrival.time <= now + 21600;
+        })
+        .sort(function (first, second) {
+          return first.time - second.time;
+        });
     }
 
     function scheduleQueryValues(cluster, name) {
@@ -1177,7 +1261,8 @@
 
     function scheduledMetrolinkLineLabel(arrival) {
       const line = String(arrival.line || arrival.routeId || 'Metrolink').replace(/\s+LINE$/i, '');
-      return /metrolink/i.test(line) ? line : 'Metrolink ' + line;
+      const operator = arrival.operator || (/^A/i.test(String(arrival.trainDesignation || '')) ? 'Amtrak' : 'Metrolink');
+      return /^(metrolink|amtrak)\b/i.test(line) ? line : operator + ' ' + line;
     }
 
     function scheduledRows(rows, labelFunction) {
@@ -1201,6 +1286,7 @@
                 return '<div class="scheduled-time-row">' +
                   '<span class="arrival-line">' + escapeHtml(labelFunction(arrival)) + '</span>' +
                   '<span></span>' +
+                  '<span class="arrival-track">' + escapeHtml(arrival.track || '') + '</span>' +
                   '<span class="arrival-time">' + formatScheduledClockTime(arrival.time) + '</span>' +
                   '</div>';
               }).join('');
@@ -1215,10 +1301,13 @@
         '<div class="arrival-board"><div class="arrival-note">Loading upcoming arrivals…</div></div>');
       const metroArrivals = hasMetro ? metroArrivalsForCluster(cluster) : [];
       let metrolinkArrivals = [];
+      let metrolinkScheduledRows = [];
       let metrolinkError = '';
       if (hasMetrolink) {
         try {
-          metrolinkArrivals = metrolinkArrivalsForCluster(cluster, await fetchMetrolinkSchedule());
+          const metrolinkSchedule = await fetchMetrolinkSchedule();
+          metrolinkArrivals = metrolinkArrivalsForCluster(cluster, metrolinkSchedule);
+          metrolinkScheduledRows = metrolinkScheduleRowsForCluster(cluster, metrolinkSchedule);
         } catch (error) {
           metrolinkError = error.message;
         }
@@ -1242,12 +1331,14 @@
       if (hasMetrolink) {
         board += '<div class="arrival-heading">Metrolink / Amtrak</div>';
         board += metrolinkArrivals.length
-          ? metrolinkArrivals.map((arrival) => arrivalRow(arrival.line, arrival.destination, arrival.time)).join('')
+          ? metrolinkArrivals.map((arrival) => arrivalRow(arrival.line, arrival.destination, arrival.time, formatArrivalTime, arrival.track)).join('')
           : '<div class="arrival-note">' + escapeHtml(metrolinkError || 'No upcoming trains found.') + '</div>';
       }
       if (hasMetroRail || hasMetrolink) {
         const scheduledMetro = stationSchedule.schedules?.metro || [];
-        const scheduledMetrolink = stationSchedule.schedules?.metrolink || [];
+        const scheduledMetrolink = metrolinkScheduledRows.length
+          ? metrolinkScheduledRows
+          : stationSchedule.schedules?.metrolink || [];
         board += '<div class="arrival-heading">Scheduled times</div>';
 
         if (hasMetroRail) {
@@ -1443,10 +1534,20 @@
     }
 
     function showVehicleDetails(vehicle, backAction) {
-      const content = (backAction ? '<button type="button" class="sheet-back" data-sheet-back>&larr; Back</button>' : '') +
+      const vehicleContent = function (metrolinkSchedule = []) {
+        return (backAction ? '<button type="button" class="sheet-back" data-sheet-back>&larr; Back</button>' : '') +
         '<div class="sheet-choice-icon" style="margin-bottom:10px">' + vehicleSheetIcon(vehicle) + '</div>' +
-        '<div class="sheet-detail">' + popupFor(vehicle) + '</div>';
-      openSheet(content, backAction);
+        '<div class="sheet-detail">' + popupFor(vehicle, metrolinkSchedule) + '</div>';
+      };
+      openSheet(vehicleContent(), backAction);
+
+      if (vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak') {
+        const generation = sheetGeneration;
+        fetchMetrolinkSchedule().then(function (schedule) {
+          if (!mapSheet.classList.contains('open') || sheetGeneration !== generation) return;
+          updateSheetContent(vehicleContent(schedule));
+        }).catch(function () {});
+      }
     }
 
     function openStationOrOverlap(stationEntry) {
@@ -1466,7 +1567,7 @@
       }
     }
 
-    function popupFor(vehicle) {
+    function popupFor(vehicle, metrolinkSchedule = []) {
       const title = vehicle.agency === 'metro' ? 'LA Metro ' + metroLineName(vehicle.routeId) + ' Line'
         : vehicle.agency === 'amtrak' ? 'Amtrak train'
         : 'Metrolink train';
@@ -1475,13 +1576,15 @@
         : 'Unknown';
       const destination = destinationForTrain(vehicle);
       const nextStop = nextStopForTrain(vehicle);
-      const upcomingStops = upcomingStopsForTrain(vehicle);
+      const nextStopTrack = nextStop ? trackForMetrolinkStop(vehicle, nextStop.name, metrolinkSchedule) : '';
+      const upcomingStops = upcomingStopsForTrain(vehicle, metrolinkSchedule);
       const upcomingStopList = upcomingStops.length
         ? '<div class="arrival-heading">Upcoming stops</div>' +
           upcomingStops.map(function (stop) {
             return '<div class="upcoming-stop-row">' +
               '<span></span>' +
               '<span class="upcoming-stop-name">' + escapeHtml(stop.name) + '</span>' +
+              '<span class="arrival-track">' + escapeHtml(stop.track || '') + '</span>' +
               '<span class="arrival-time">' + formatArrivalTime(stop.time) + '</span>' +
               '</div>';
           }).join('')
@@ -1491,6 +1594,7 @@
         'Vehicle: ' + escapeHtml(vehicle.label || vehicle.id) + '<br>' +
         (destination ? 'To: ' + escapeHtml(destination) + '<br>' : '') +
         (nextStop ? 'Next station: ' + escapeHtml(nextStop.name) + '<br>' +
+          (nextStopTrack ? 'Track: ' + escapeHtml(nextStopTrack) + '<br>' : '') +
           'Arrives in: ' + formatArrivalTime(nextStop.time) + '<br>' : '') +
         (vehicle.delayStatus ? 'Status: ' + escapeHtml(vehicle.delayStatus) + '<br>' : '') +
         'Updated: ' + updated +
