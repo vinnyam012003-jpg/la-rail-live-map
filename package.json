@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:gj-schedule": "node scripts/build-metro-gj-schedule.mjs",
     "start": "node server.mjs"
   },
   "dependencies": {

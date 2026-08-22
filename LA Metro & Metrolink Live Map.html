@@ -359,7 +359,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.55';
+    const APP_VERSION = 'Beta 1.56';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -789,11 +789,15 @@
     }
 
     function metroLineName(routeId) {
+      const route = String(routeId || '').trim().toUpperCase();
+      const baseRoute = route.match(/^(801|802|803|804|805|807|808|901|910|950)(?:\b|-)/)?.[1] || route;
       return ({ '801': 'A', '802': 'B', '803': 'C', '804': 'E', '805': 'D',
-        '807': 'K', '808': 'K', '901': 'G', '910': 'J', '950': 'J' })[routeId] || routeId;
+        '807': 'K', '808': 'K', '901': 'G', '910': 'J', '950': 'J' })[baseRoute] || baseRoute;
     }
 
     function metroDestination(routeId, directionId) {
+      const route = String(routeId || '').trim().toUpperCase();
+      const baseRoute = route.match(/^(801|802|803|804|805|807|808|901|910|950)(?:\b|-)/)?.[1] || route;
       const destinations = {
         '801': ['Pomona North', 'Long Beach'],
         '802': ['Union Station', 'North Hollywood'],
@@ -806,7 +810,7 @@
         '910': ['El Monte', 'Harbor Gateway / San Pedro'],
         '950': ['El Monte', 'San Pedro']
       };
-      return destinations[routeId]?.[Number(directionId)] || 'Direction ' + (Number(directionId) + 1);
+      return destinations[baseRoute]?.[Number(directionId)] || 'Direction ' + (Number(directionId) + 1);
     }
 
     function metroDestinationFromBearing(routeId, bearing) {
@@ -1275,6 +1279,7 @@
 
     function scheduleQueryValues(cluster, name) {
       const metroRailStopIds = new Set();
+      const metroBrtStopIds = new Set();
       const metrolinkStopIds = new Set();
       const names = new Set([name]);
 
@@ -1284,6 +1289,12 @@
           metroRailStopIds.add(String(record.id));
           metroRailStopIds.add(String(record.id).replace(/S$/, ''));
         }
+        if (record.agency === 'Metro' && record.mode === 'brt') {
+          (record.arrivalStopIds || []).forEach(function (stopId) {
+            metroBrtStopIds.add(String(stopId));
+          });
+          if (record.id) metroBrtStopIds.add(String(record.id));
+        }
         if (record.agency === 'Metrolink' && record.id) {
           metrolinkStopIds.add(String(record.id));
         }
@@ -1291,6 +1302,7 @@
 
       return {
         metroRailStopIds: Array.from(metroRailStopIds),
+        metroBrtStopIds: Array.from(metroBrtStopIds),
         metrolinkStopIds: Array.from(metrolinkStopIds),
         names: Array.from(names).filter(Boolean)
       };
@@ -1300,6 +1312,7 @@
       const values = scheduleQueryValues(cluster, name);
       const parameters = new URLSearchParams();
       if (values.metroRailStopIds.length) parameters.set('metroRailStopIds', values.metroRailStopIds.join(','));
+      if (values.metroBrtStopIds.length) parameters.set('metroBrtStopIds', values.metroBrtStopIds.join(','));
       if (values.metrolinkStopIds.length) parameters.set('metrolinkStopIds', values.metrolinkStopIds.join(','));
       if (values.names.length) parameters.set('names', values.names.join(','));
 
@@ -1403,7 +1416,10 @@
             ? scheduledRows(scheduledMetro, scheduledMetroLineLabel)
             : '<div class="arrival-note">' + escapeHtml(stationSchedule.errors?.metro || stationScheduleError || 'No Metro scheduled trips found soon.') + '</div>';
         } else if (hasMetroBrt && !hasMetrolink) {
-          board += '<div class="arrival-note">G/J scheduled times temporarily disabled. Live arrivals are still shown above.</div>';
+          board += '<div class="arrival-note">LA Metro G/J schedule</div>';
+          board += scheduledMetro.length
+            ? scheduledRows(scheduledMetro, scheduledMetroLineLabel)
+            : '<div class="arrival-note">' + escapeHtml(stationSchedule.errors?.metroBrt || stationScheduleError || 'No G/J scheduled trips found soon.') + '</div>';
         }
 
         if (hasMetrolink) {

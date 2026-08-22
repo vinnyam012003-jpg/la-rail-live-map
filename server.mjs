@@ -59,6 +59,10 @@ const staticScheduleCache = {
   metro: { fetchedAt: 0, value: null, pending: null },
   metrolink: { fetchedAt: 0, value: null, pending: null }
 };
+const metroGjSchedulePath = join(root, 'data', 'metro-gj-schedule.json');
+const prebuiltScheduleCache = {
+  metroGj: { loadedAt: 0, value: null, pending: null }
+};
 const scheduleHorizonSeconds = 6 * 60 * 60;
 const scheduleTimeZone = 'America/Los_Angeles';
 
@@ -730,6 +734,47 @@ function buildStaticScheduleIndex(feedConfig, entries) {
   };
 }
 
+function scheduleObjectToMap(value) {
+  return new Map(Object.entries(value || {}));
+}
+
+function scheduleStopTimesObjectToMap(value) {
+  return new Map(Object.entries(value || {}).map(([stopId, entries]) => [stopId, Array.isArray(entries) ? entries : []]));
+}
+
+async function fetchPrebuiltMetroGjScheduleFeed() {
+  const cache = prebuiltScheduleCache.metroGj;
+  if (cache.value) return cache.value;
+  if (!cache.pending) {
+    cache.pending = readFile(metroGjSchedulePath, 'utf8')
+      .then((text) => {
+        const data = JSON.parse(text);
+        const feed = {
+          agency: data.agency || 'metro',
+          label: data.label || 'LA Metro G/J',
+          calendar: scheduleObjectToMap(data.calendar),
+          calendarDates: scheduleObjectToMap(data.calendarDates),
+          stopTimesByStop: scheduleStopTimesObjectToMap(data.stopTimesByStop),
+          stopNameIndex: Array.isArray(data.stopNameIndex) ? data.stopNameIndex : [],
+          fetchedAt: data.generatedAt || new Date().toISOString()
+        };
+        cache.value = feed;
+        cache.loadedAt = Date.now();
+        return feed;
+      })
+      .catch((error) => {
+        if (error?.code === 'ENOENT') {
+          throw new Error('G/J schedule file is missing. Run npm run build:gj-schedule locally, then upload data/metro-gj-schedule.json.');
+        }
+        throw error;
+      })
+      .finally(() => {
+        cache.pending = null;
+      });
+  }
+  return cache.pending;
+}
+
 function getStopIdsForSchedule(feed, requestedStopIds, requestedNames) {
   const stopIds = new Set();
   requestedStopIds.forEach((stopId) => {
@@ -754,7 +799,13 @@ function routeMatchesWhitelist(entry, routeWhitelist) {
     entry.line,
     entry.routeId
   ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
-  return values.some((value) => routeWhitelist.has(value));
+  return values.some((value) => {
+    if (routeWhitelist.has(value)) return true;
+    if (/^(901|910|950)(?:\b|-)/.test(value)) return true;
+    if (/\b(g|j)\s*line\b/.test(value)) return true;
+    if (value.includes('orange line') || value.includes('silver line')) return true;
+    return false;
+  });
 }
 
 function upcomingSchedulesForFeed(feed, stopIds, names, options = {}) {
@@ -817,10 +868,12 @@ async function sendStationSchedule(requestUrl, response) {
     ...metroStopIds,
     ...splitQueryList(requestUrl.searchParams.get('metroRailStopIds'))
   ];
+  const metroBrtStopIds = splitQueryList(requestUrl.searchParams.get('metroBrtStopIds'));
   const metrolinkStopIds = splitQueryList(requestUrl.searchParams.get('metrolinkStopIds'));
   const names = splitQueryList(requestUrl.searchParams.get('names'));
   const errors = {};
   let metro = [];
+  let metroBrt = [];
   let metrolink = [];
 
   if (metroRailStopIds.length) {
@@ -831,6 +884,18 @@ async function sendStationSchedule(requestUrl, response) {
       });
     } catch (error) {
       errors.metro = error.message;
+    }
+  }
+
+  if (metroBrtStopIds.length) {
+    try {
+      const feed = await fetchPrebuiltMetroGjScheduleFeed();
+      metroBrt = upcomingSchedulesForFeed(feed, metroBrtStopIds, names, {
+        routeWhitelist: ['g', 'j', '901', '910', '950'],
+        maxRows: 60
+      });
+    } catch (error) {
+      errors.metroBrt = error.message;
     }
   }
 
@@ -846,7 +911,7 @@ async function sendStationSchedule(requestUrl, response) {
   sendJson(response, 200, {
     updatedAt: new Date().toISOString(),
     horizonSeconds: scheduleHorizonSeconds,
-    schedules: { metro, metrolink },
+    schedules: { metro: [...metro, ...metroBrt].sort((first, second) => first.time - second.time), metrolink },
     errors
   });
 }
