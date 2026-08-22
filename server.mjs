@@ -51,7 +51,7 @@ const staticScheduleFeeds = {
   metroBus: {
     agency: 'metro',
     label: 'LA Metro Bus',
-    url: 'https://gitlab.com/LACMTA/gtfs_bus/-/raw/master/gtfs_bus.zip',
+    url: 'https://gitlab.com/LACMTA/gtfs_bus/raw/master/gtfs_bus.zip',
     cacheMs: 6 * 60 * 60 * 1000
   },
   metrolink: {
