@@ -359,7 +359,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.57';
+    const APP_VERSION = 'Beta 1.58';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -566,7 +566,7 @@
         L.polyline(segment, {
           color: metroLineColors['Metro D Line'],
           weight: 5,
-          opacity: 0.55,
+          opacity: 0.9,
           lineCap: 'round',
           lineJoin: 'round'
         }).bindPopup(popup).addTo(layerGroup);
@@ -1511,9 +1511,18 @@
       if (!status || /on\s*time|early|normal|good/.test(status)) return '';
       const isMinor = /minor|slight|small/.test(status);
       const isMajor = /major|extended|severe|cancel|annul|very|significant|late|delayed/.test(status);
-      const delayClass = isMinor || !isMajor ? 'minor-delay' : 'major-delay';
+      const delayClass = isMinor && !isMajor ? 'minor-delay' : 'major-delay';
       const label = delayClass === 'major-delay' ? 'Major delay' : 'Minor delay';
       return '<span class="train-delay-dot ' + delayClass + '" title="' + label + '"></span>';
+    }
+
+    function delayReasonForTrain(vehicle) {
+      if (vehicle.agency !== 'metrolink' && vehicle.agency !== 'amtrak') return '';
+      const status = String(vehicle.delayStatus || '').trim();
+      if (!status || /on\s*time|early|normal|good/i.test(status)) return '';
+      const reason = String(vehicle.delayReason || '').trim();
+      if (reason && reason.toLowerCase() !== status.toLowerCase()) return reason;
+      return status && !/^delayed$/i.test(status) ? status : 'reported by Metrolink feed';
     }
 
     function stationSheetIcon() {
@@ -1657,6 +1666,7 @@
       const nextStop = nextStopForTrain(vehicle);
       const nextStopTrack = nextStop ? trackForMetrolinkStop(vehicle, nextStop.name, metrolinkSchedule) : '';
       const upcomingStops = upcomingStopsForTrain(vehicle, metrolinkSchedule);
+      const delayReason = delayReasonForTrain(vehicle);
       const upcomingStopList = upcomingStops.length
         ? '<div class="arrival-heading">Upcoming stops</div>' +
           upcomingStops.map(function (stop) {
@@ -1676,6 +1686,7 @@
           (nextStopTrack ? 'Track: ' + escapeHtml(nextStopTrack) + '<br>' : '') +
           'Arrives in: ' + formatArrivalTime(nextStop.time) + '<br>' : '') +
         (vehicle.delayStatus ? 'Status: ' + escapeHtml(vehicle.delayStatus) + '<br>' : '') +
+        (delayReason ? 'Delay: ' + escapeHtml(delayReason) + '<br>' : '') +
         'Updated: ' + updated +
         upcomingStopList;
     }
@@ -1941,6 +1952,7 @@
             currentStatus: vehicle.currentStatus ?? '',
             stopId: vehicle.stopId || '',
             delayStatus: vehicle.delayStatus || '',
+            delayReason: vehicle.delayReason || '',
             timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
           };
           const tripUpdate = metrolinkTripUpdatesByTripId.get(String(mappedVehicle.tripId || ''));

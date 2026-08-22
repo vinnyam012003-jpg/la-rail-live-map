@@ -172,6 +172,10 @@ async function fetchPublicMetrolinkAndAmtrakVehicles() {
   const data = await response.json();
   return (Array.isArray(data) ? data : []).map((train) => {
     const isAmtrak = /PAC\s*SURF|AMTRAK/i.test(String(train.line || ''));
+    const delayStatus = train.delay_status || train.delayStatus || train.status || train.train_status || train.TrainStatus || '';
+    const delayReason = train.delay_reason || train.DelayReason || train.status_reason || train.StatusReason ||
+      train.status_message || train.StatusMessage || train.delay_message || train.DelayMessage ||
+      train.reason || train.Reason || train.comment || train.Comment || '';
     return {
       agency: isAmtrak ? 'amtrak' : 'metrolink',
       id: train.symbol,
@@ -184,7 +188,8 @@ async function fetchPublicMetrolinkAndAmtrakVehicles() {
       bearing: null,
       speed: Number(train.speed) || 0,
       direction: train.direction || train.Direction || train.dir || train.Dir || train.trainDirection || train.TrainDirection || train.heading || '',
-      delayStatus: train.delay_status || '',
+      delayStatus,
+      delayReason,
       timestamp: parseMetrolinkTimestamp(train.ptc_time)
     };
   }).filter((vehicle) => vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude));
@@ -229,15 +234,35 @@ async function getCachedMetrolinkVehicles() {
       if (publicResult.status === 'rejected') errors.public = publicResult.reason.message;
       if (tripUpdatesResult.status === 'rejected') errors.metrolinkTripUpdates = tripUpdatesResult.reason.message;
 
-      const publicMetrolinkVehicles = officialVehicles.length
+      const publicMetrolinkVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'metrolink');
+      const publicDelayByTrain = new Map();
+      publicMetrolinkVehicles.forEach((vehicle) => {
+        [vehicle.id, vehicle.label].map((value) => String(value || '').trim()).filter(Boolean).forEach((key) => {
+          publicDelayByTrain.set(key, vehicle);
+        });
+      });
+      const enrichedOfficialVehicles = officialVehicles.map((vehicle) => {
+        const publicVehicle = publicDelayByTrain.get(String(vehicle.id || '').trim()) ||
+          publicDelayByTrain.get(String(vehicle.label || '').trim());
+        if (!publicVehicle) return vehicle;
+        return {
+          ...vehicle,
+          destination: vehicle.destination || publicVehicle.destination || '',
+          direction: vehicle.direction || publicVehicle.direction || '',
+          delayStatus: vehicle.delayStatus || publicVehicle.delayStatus || '',
+          delayReason: vehicle.delayReason || publicVehicle.delayReason || ''
+        };
+      });
+
+      const fallbackMetrolinkVehicles = officialVehicles.length
         ? []
-        : publicVehicles.filter((vehicle) => vehicle.agency === 'metrolink');
+        : publicMetrolinkVehicles;
       const amtrakVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'amtrak');
 
       const value = {
         updatedAt: new Date().toISOString(),
         cacheSeconds: Math.round(metrolinkFeed.cacheMs / 1000),
-        vehicles: officialVehicles.concat(publicMetrolinkVehicles, amtrakVehicles),
+        vehicles: enrichedOfficialVehicles.concat(fallbackMetrolinkVehicles, amtrakVehicles),
         tripUpdates,
         source: officialVehicles.length ? 'api-key' : 'public-fallback',
         errors
