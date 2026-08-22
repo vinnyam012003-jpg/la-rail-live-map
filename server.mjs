@@ -604,7 +604,10 @@ function serviceIsActive(feed, serviceId, dateParts) {
   const calendar = feed.calendar.get(serviceId);
   if (!calendar) return false;
   if (dateKey < calendar.startDate || dateKey > calendar.endDate) return false;
-  return calendar.days.has(dateParts.weekday);
+  const days = calendar.days instanceof Set
+    ? calendar.days
+    : new Set(Array.isArray(calendar.days) ? calendar.days : []);
+  return days.has(dateParts.weekday);
 }
 
 function addStopIndexEntry(index, stopId, entry) {
@@ -738,6 +741,16 @@ function scheduleObjectToMap(value) {
   return new Map(Object.entries(value || {}));
 }
 
+function scheduleCalendarObjectToMap(value) {
+  return new Map(Object.entries(value || {}).map(([serviceId, calendar]) => [
+    serviceId,
+    {
+      ...calendar,
+      days: new Set(Array.isArray(calendar?.days) ? calendar.days : [])
+    }
+  ]));
+}
+
 function scheduleStopTimesObjectToMap(value) {
   return new Map(Object.entries(value || {}).map(([stopId, entries]) => [stopId, Array.isArray(entries) ? entries : []]));
 }
@@ -752,7 +765,7 @@ async function fetchPrebuiltMetroGjScheduleFeed() {
         const feed = {
           agency: data.agency || 'metro',
           label: data.label || 'LA Metro G/J',
-          calendar: scheduleObjectToMap(data.calendar),
+          calendar: scheduleCalendarObjectToMap(data.calendar),
           calendarDates: scheduleObjectToMap(data.calendarDates),
           stopTimesByStop: scheduleStopTimesObjectToMap(data.stopTimesByStop),
           stopNameIndex: Array.isArray(data.stopNameIndex) ? data.stopNameIndex : [],

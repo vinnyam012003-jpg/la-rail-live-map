@@ -359,7 +359,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.56';
+    const APP_VERSION = 'Beta 1.57';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1158,7 +1158,10 @@
 
     function metroArrivalsForCluster(cluster) {
       const stopIds = new Set();
+      const allowedLines = new Set();
       cluster.records.filter((record) => record.agency === 'Metro').forEach(function (record) {
+        String(record.lines || '').split(',').map((line) => line.trim().toUpperCase()).filter(Boolean)
+          .forEach((line) => allowedLines.add(line));
         (record.arrivalStopIds || (record.id ? [String(record.id).replace(/S$/, '')] : []))
           .forEach((stopId) => stopIds.add(String(stopId)));
       });
@@ -1166,6 +1169,8 @@
       const predictions = [];
       stopIds.forEach(function (stopId) {
         (metroArrivalPredictions.get(stopId) || []).forEach(function (prediction) {
+          const line = String(metroLineName(prediction.routeId)).toUpperCase();
+          if (allowedLines.size && !allowedLines.has(line)) return;
           if (prediction.time >= now - 30 && prediction.time < now + 10800) predictions.push(prediction);
         });
       });
