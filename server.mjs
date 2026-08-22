@@ -48,12 +48,6 @@ const staticScheduleFeeds = {
     url: 'https://gitlab.com/LACMTA/gtfs_rail/-/raw/master/gtfs_rail.zip',
     cacheMs: 6 * 60 * 60 * 1000
   },
-  metroBus: {
-    agency: 'metro',
-    label: 'LA Metro Bus',
-    url: 'https://gitlab.com/LACMTA/gtfs_bus/raw/master/gtfs_bus.zip',
-    cacheMs: 6 * 60 * 60 * 1000
-  },
   metrolink: {
     agency: 'metrolink',
     label: 'Metrolink',
@@ -63,7 +57,6 @@ const staticScheduleFeeds = {
 };
 const staticScheduleCache = {
   metro: { fetchedAt: 0, value: null, pending: null },
-  metroBus: { fetchedAt: 0, value: null, pending: null },
   metrolink: { fetchedAt: 0, value: null, pending: null }
 };
 const scheduleHorizonSeconds = 6 * 60 * 60;
@@ -824,12 +817,10 @@ async function sendStationSchedule(requestUrl, response) {
     ...metroStopIds,
     ...splitQueryList(requestUrl.searchParams.get('metroRailStopIds'))
   ];
-  const metroBrtStopIds = splitQueryList(requestUrl.searchParams.get('metroBrtStopIds'));
   const metrolinkStopIds = splitQueryList(requestUrl.searchParams.get('metrolinkStopIds'));
   const names = splitQueryList(requestUrl.searchParams.get('names'));
   const errors = {};
   let metro = [];
-  let metroBrt = [];
   let metrolink = [];
 
   if (metroRailStopIds.length) {
@@ -840,18 +831,6 @@ async function sendStationSchedule(requestUrl, response) {
       });
     } catch (error) {
       errors.metro = error.message;
-    }
-  }
-
-  if (metroBrtStopIds.length) {
-    try {
-      const feed = await fetchStaticScheduleFeed('metroBus');
-      metroBrt = upcomingSchedulesForFeed(feed, metroBrtStopIds, names, {
-        routeWhitelist: ['g', 'j', '901', '910', '950'],
-        maxRows: 60
-      });
-    } catch (error) {
-      errors.metroBrt = error.message;
     }
   }
 
@@ -867,7 +846,7 @@ async function sendStationSchedule(requestUrl, response) {
   sendJson(response, 200, {
     updatedAt: new Date().toISOString(),
     horizonSeconds: scheduleHorizonSeconds,
-    schedules: { metro: [...metro, ...metroBrt].sort((first, second) => first.time - second.time), metrolink },
+    schedules: { metro, metrolink },
     errors
   });
 }

@@ -359,7 +359,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.54';
+    const APP_VERSION = 'Beta 1.55';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1275,7 +1275,6 @@
 
     function scheduleQueryValues(cluster, name) {
       const metroRailStopIds = new Set();
-      const metroBrtStopIds = new Set();
       const metrolinkStopIds = new Set();
       const names = new Set([name]);
 
@@ -1285,12 +1284,6 @@
           metroRailStopIds.add(String(record.id));
           metroRailStopIds.add(String(record.id).replace(/S$/, ''));
         }
-        if (record.agency === 'Metro' && record.mode === 'brt') {
-          (record.arrivalStopIds || []).forEach(function (stopId) {
-            metroBrtStopIds.add(String(stopId));
-          });
-          if (record.id) metroBrtStopIds.add(String(record.id));
-        }
         if (record.agency === 'Metrolink' && record.id) {
           metrolinkStopIds.add(String(record.id));
         }
@@ -1298,7 +1291,6 @@
 
       return {
         metroRailStopIds: Array.from(metroRailStopIds),
-        metroBrtStopIds: Array.from(metroBrtStopIds),
         metrolinkStopIds: Array.from(metrolinkStopIds),
         names: Array.from(names).filter(Boolean)
       };
@@ -1308,7 +1300,6 @@
       const values = scheduleQueryValues(cluster, name);
       const parameters = new URLSearchParams();
       if (values.metroRailStopIds.length) parameters.set('metroRailStopIds', values.metroRailStopIds.join(','));
-      if (values.metroBrtStopIds.length) parameters.set('metroBrtStopIds', values.metroBrtStopIds.join(','));
       if (values.metrolinkStopIds.length) parameters.set('metrolinkStopIds', values.metrolinkStopIds.join(','));
       if (values.names.length) parameters.set('names', values.names.join(','));
 
@@ -1362,7 +1353,6 @@
       const hasMetrolink = cluster.records.some((record) => record.agency === 'Metrolink');
       const hasMetroRail = cluster.records.some((record) => record.agency === 'Metro' && record.mode === 'rail');
       const hasMetroBrt = cluster.records.some((record) => record.agency === 'Metro' && record.mode === 'brt');
-      const hasMetroScheduled = hasMetroRail || hasMetroBrt;
       marker.setPopupContent(stationPopupHeader(name, services) +
         '<div class="arrival-board"><div class="arrival-note">Loading upcoming arrivals…</div></div>');
       const metroArrivals = hasMetro ? metroArrivalsForCluster(cluster) : [];
@@ -1400,22 +1390,20 @@
           ? metrolinkArrivals.map((arrival) => arrivalRow(arrival.line, arrival.destination, arrival.time, formatArrivalTime, arrival.track)).join('')
           : '<div class="arrival-note">' + escapeHtml(metrolinkError || 'No upcoming trains found.') + '</div>';
       }
-      if (hasMetroScheduled || hasMetrolink) {
+      if (hasMetroRail || hasMetroBrt || hasMetrolink) {
         const scheduledMetro = stationSchedule.schedules?.metro || [];
         const scheduledMetrolink = metrolinkScheduledRows.length
           ? metrolinkScheduledRows
           : stationSchedule.schedules?.metrolink || [];
         board += '<div class="arrival-heading">Scheduled times</div>';
 
-        if (hasMetroScheduled) {
-          board += '<div class="arrival-note">' + (hasMetroRail && !hasMetroBrt
-            ? 'LA Metro rail schedule'
-            : hasMetroBrt && !hasMetroRail
-              ? 'LA Metro G/J schedule'
-              : 'LA Metro schedule') + '</div>';
+        if (hasMetroRail) {
+          board += '<div class="arrival-note">LA Metro rail schedule</div>';
           board += scheduledMetro.length
             ? scheduledRows(scheduledMetro, scheduledMetroLineLabel)
-            : '<div class="arrival-note">' + escapeHtml(stationSchedule.errors?.metro || stationSchedule.errors?.metroBrt || stationScheduleError || 'No Metro scheduled trips found soon.') + '</div>';
+            : '<div class="arrival-note">' + escapeHtml(stationSchedule.errors?.metro || stationScheduleError || 'No Metro scheduled trips found soon.') + '</div>';
+        } else if (hasMetroBrt && !hasMetrolink) {
+          board += '<div class="arrival-note">G/J scheduled times temporarily disabled. Live arrivals are still shown above.</div>';
         }
 
         if (hasMetrolink) {
