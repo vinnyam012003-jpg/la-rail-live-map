@@ -48,6 +48,12 @@ const staticScheduleFeeds = {
     url: 'https://gitlab.com/LACMTA/gtfs_rail/-/raw/master/gtfs_rail.zip',
     cacheMs: 6 * 60 * 60 * 1000
   },
+  metroBus: {
+    agency: 'metro',
+    label: 'LA Metro Bus',
+    url: 'https://gitlab.com/LACMTA/gtfs_bus/-/raw/master/gtfs_bus.zip',
+    cacheMs: 6 * 60 * 60 * 1000
+  },
   metrolink: {
     agency: 'metrolink',
     label: 'Metrolink',
@@ -57,9 +63,13 @@ const staticScheduleFeeds = {
 };
 const staticScheduleCache = {
   metro: { fetchedAt: 0, value: null, pending: null },
+  metroBus: { fetchedAt: 0, value: null, pending: null },
   metrolink: { fetchedAt: 0, value: null, pending: null }
 };
-const scheduleHorizonSeconds = 6 * 60 * 60;
+const defaultScheduleHorizonSeconds = 6 * 60 * 60;
+const brtScheduleHorizonSeconds = 24 * 60 * 60;
+const railScheduleSearchSeconds = 36 * 60 * 60;
+const railOvernightGapSeconds = 2.5 * 60 * 60;
 const scheduleTimeZone = 'America/Los_Angeles';
 
 function loadLocalEnv(path) {
@@ -748,20 +758,68 @@ function getStopIdsForSchedule(feed, requestedStopIds, requestedNames) {
   return Array.from(stopIds);
 }
 
-function upcomingSchedulesForFeed(feed, stopIds, names, limit = 10) {
+function trimRailScheduleToServiceDay(candidates) {
+  const grouped = new Map();
+  candidates.forEach((candidate) => {
+    const key = [
+      candidate.agency,
+      candidate.line,
+      candidate.destination
+    ].join(':');
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(candidate);
+  });
+
+  const trimmed = [];
+  grouped.forEach((group) => {
+    const sorted = group.sort((first, second) => first.time - second.time);
+    let previous = null;
+    for (const candidate of sorted) {
+      trimmed.push(candidate);
+      if (previous && candidate.time - previous.time >= railOvernightGapSeconds) break;
+      previous = candidate;
+    }
+  });
+
+  return trimmed.sort((first, second) => first.time - second.time);
+}
+
+function routeMatchesWhitelist(entry, routeWhitelist) {
+  if (!routeWhitelist?.size) return true;
+  const values = [
+    entry.line,
+    entry.routeId
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  return values.some((value) => routeWhitelist.has(value));
+}
+
+function upcomingSchedulesForFeed(feed, stopIds, names, options = {}) {
+  if (typeof options === 'number') options = { limit: options };
+  const mode = options.mode || 'standard';
+  const limit = options.limit ?? 10;
+  const maxRows = options.maxRows ?? limit;
+  const horizonSeconds = options.horizonSeconds ?? (
+    mode === 'brt' ? brtScheduleHorizonSeconds
+      : mode === 'rail' ? railScheduleSearchSeconds
+        : defaultScheduleHorizonSeconds
+  );
+  const routeWhitelist = options.routeWhitelist
+    ? new Set(options.routeWhitelist.map((route) => String(route).trim().toLowerCase()))
+    : null;
   const now = new Date();
   const nowSeconds = Math.floor(now.getTime() / 1000);
   const baseParts = getZonedParts(now);
-  const serviceDates = [-1, 0, 1].map((offset) => shiftedDateParts(baseParts, offset));
+  const serviceDates = [-1, 0, 1, 2].map((offset) => shiftedDateParts(baseParts, offset));
   const candidates = [];
   const matchedStopIds = getStopIdsForSchedule(feed, stopIds, names);
 
   matchedStopIds.forEach((stopId) => {
     (feed.stopTimesByStop.get(stopId) || []).forEach((entry) => {
+      if (!routeMatchesWhitelist(entry, routeWhitelist)) return;
       serviceDates.forEach((dateParts) => {
         if (!serviceIsActive(feed, entry.serviceId, dateParts)) return;
         const timestamp = zonedDateTimeEpochSeconds(dateParts, entry.seconds);
-        if (timestamp < nowSeconds - 60 || timestamp > nowSeconds + scheduleHorizonSeconds) return;
+        if (timestamp < nowSeconds - 60 || timestamp > nowSeconds + horizonSeconds) return;
         candidates.push({
           agency: entry.agency,
           line: entry.line,
@@ -787,7 +845,9 @@ function upcomingSchedulesForFeed(feed, stopIds, names, limit = 10) {
     if (!unique.has(key)) unique.set(key, candidate);
   });
 
-  return Array.from(unique.values()).slice(0, limit);
+  const values = Array.from(unique.values());
+  const limitedByServiceDay = mode === 'rail' ? trimRailScheduleToServiceDay(values) : values;
+  return limitedByServiceDay.slice(0, maxRows);
 }
 
 function splitQueryList(value) {
@@ -796,18 +856,40 @@ function splitQueryList(value) {
 
 async function sendStationSchedule(requestUrl, response) {
   const metroStopIds = splitQueryList(requestUrl.searchParams.get('metroStopIds'));
+  const metroRailStopIds = [
+    ...metroStopIds,
+    ...splitQueryList(requestUrl.searchParams.get('metroRailStopIds'))
+  ];
+  const metroBrtStopIds = splitQueryList(requestUrl.searchParams.get('metroBrtStopIds'));
   const metrolinkStopIds = splitQueryList(requestUrl.searchParams.get('metrolinkStopIds'));
   const names = splitQueryList(requestUrl.searchParams.get('names'));
   const errors = {};
   let metro = [];
+  let metroBrt = [];
   let metrolink = [];
 
-  if (metroStopIds.length) {
+  if (metroRailStopIds.length) {
     try {
       const feed = await fetchStaticScheduleFeed('metro');
-      metro = upcomingSchedulesForFeed(feed, metroStopIds, names, 12);
+      metro = upcomingSchedulesForFeed(feed, metroRailStopIds, names, {
+        mode: 'rail',
+        maxRows: 300
+      });
     } catch (error) {
       errors.metro = error.message;
+    }
+  }
+
+  if (metroBrtStopIds.length) {
+    try {
+      const feed = await fetchStaticScheduleFeed('metroBus');
+      metroBrt = upcomingSchedulesForFeed(feed, metroBrtStopIds, names, {
+        mode: 'brt',
+        routeWhitelist: ['g', 'j', '901', '910', '950'],
+        maxRows: 300
+      });
+    } catch (error) {
+      errors.metroBrt = error.message;
     }
   }
 
@@ -822,8 +904,12 @@ async function sendStationSchedule(requestUrl, response) {
 
   sendJson(response, 200, {
     updatedAt: new Date().toISOString(),
-    horizonSeconds: scheduleHorizonSeconds,
-    schedules: { metro, metrolink },
+    horizonSeconds: {
+      metroRail: railScheduleSearchSeconds,
+      metroBrt: brtScheduleHorizonSeconds,
+      metrolink: defaultScheduleHorizonSeconds
+    },
+    schedules: { metro: [...metro, ...metroBrt].sort((first, second) => first.time - second.time), metrolink },
     errors
   });
 }
