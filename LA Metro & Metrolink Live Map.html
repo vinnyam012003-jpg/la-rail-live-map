@@ -368,7 +368,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.64';
+    const APP_VERSION = 'Beta 1.65';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -667,6 +667,7 @@
     let metrolinkScheduleCache = [];
     let metrolinkScheduleFetchedAt = 0;
     let metrolinkAlerts = [];
+    let liveCommuterVehicles = [];
     const stationLayer = L.layerGroup().addTo(map);
     const stationEntries = [];
 
@@ -846,6 +847,39 @@
       return Boolean(trainNumber) && (alert.trainNumbers || []).some((number) => normalizeTrainNumber(number) === trainNumber);
     }
 
+    function commuterVehicleLooksDelayed(vehicle) {
+      const status = String(vehicle.delayStatus || '').trim();
+      if (status && !/on\s*time|early|normal|good/i.test(status)) return true;
+      return Array.isArray(vehicle.delayReasons) && vehicle.delayReasons.length > 0;
+    }
+
+    function routeKeysForCommuterVehicle(vehicle) {
+      return [
+        vehicle.routeId,
+        vehicle.rawRouteId,
+        vehicle.routeName,
+        vehicle.line
+      ].map(normalizeMetrolinkRouteKey).filter(Boolean);
+    }
+
+    function commuterVehicleMatchesStationLine(vehicle, routeKeys) {
+      return routeKeysForCommuterVehicle(vehicle).some((routeKey) => routeKeys.has(routeKey));
+    }
+
+    function alertMatchesCommuterVehicle(alert, vehicle) {
+      const trainNumber = normalizeTrainNumber(vehicle.label || vehicle.id);
+      if (trainNumber && (alert.trainNumbers || []).some((number) => normalizeTrainNumber(number) === trainNumber)) return true;
+      const tripId = String(vehicle.tripId || '').trim();
+      if (tripId && (alert.tripIds || []).some((alertTripId) => String(alertTripId || '').trim() === tripId)) return true;
+      return false;
+    }
+
+    function delayedCommuterVehiclesForRouteKeys(routeKeys) {
+      return liveCommuterVehicles.filter(function (vehicle) {
+        return commuterVehicleLooksDelayed(vehicle) && commuterVehicleMatchesStationLine(vehicle, routeKeys);
+      });
+    }
+
     function alertDisplayableAtStation(alert) {
       if (alert.category === 'maintenance') return alert.activeNow || alert.maintenanceUpcoming;
       return alert.activeNow !== false;
@@ -867,12 +901,14 @@
       const trainDesignations = [...arrivals, ...scheduledRows]
         .map((arrival) => arrival.trainDesignation)
         .filter(Boolean);
+      const delayedLineVehicles = delayedCommuterVehiclesForRouteKeys(routeKeys);
 
       const matching = metrolinkAlerts.filter(function (alert) {
         if (!alertDisplayableAtStation(alert)) return false;
         if (alertHasStopMatch(alert, stopIds)) return true;
         if ((alert.category === 'delay' || alert.category === 'maintenance') && alertHasRouteMatch(alert, routeKeys)) return true;
-        return trainDesignations.some((trainDesignation) => alertMatchesTrainDesignation(alert, trainDesignation));
+        if (trainDesignations.some((trainDesignation) => alertMatchesTrainDesignation(alert, trainDesignation))) return true;
+        return delayedLineVehicles.some((vehicle) => alertMatchesCommuterVehicle(alert, vehicle));
       });
 
       return {
@@ -899,6 +935,7 @@
     function stationHasActiveLineAlert(stationEntry) {
       const routeKeys = metrolinkRouteKeysForCluster(stationEntry.cluster);
       if (!routeKeys.size) return false;
+      if (delayedCommuterVehiclesForRouteKeys(routeKeys).length) return true;
       return metrolinkAlerts.some(function (alert) {
         if (!alert.activeNow || !alertHasRouteMatch(alert, routeKeys)) return false;
         return alert.category === 'delay' || alert.category === 'maintenance';
@@ -2102,7 +2139,6 @@
             activePeriods: Array.isArray(alert.activePeriods) ? alert.activePeriods : []
           };
         }).filter((alert) => alert.text);
-        updateStationAlertMarkers();
         vehicles = (payload.vehicles || []).map(function (vehicle) {
           const mappedVehicle = {
             agency: vehicle.agency || 'metrolink',
@@ -2110,6 +2146,9 @@
             label: vehicle.label || vehicle.id,
             tripId: vehicle.tripId || '',
             routeId: vehicle.routeId || '',
+            rawRouteId: vehicle.rawRouteId || '',
+            routeName: vehicle.routeName || '',
+            line: vehicle.line || '',
             destination: vehicle.destination || '',
             latitude: Number(vehicle.latitude),
             longitude: Number(vehicle.longitude),
@@ -2134,8 +2173,12 @@
         }).filter(function (vehicle) {
           return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude);
         });
+        liveCommuterVehicles = vehicles;
+        updateStationAlertMarkers();
       } catch (error) {
         feedError = error.message;
+        liveCommuterVehicles = [];
+        updateStationAlertMarkers();
       }
 
       const activeMetrolinkIds = new Set(vehicles
