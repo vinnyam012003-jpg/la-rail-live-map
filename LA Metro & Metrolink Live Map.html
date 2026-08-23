@@ -160,12 +160,12 @@
 
     .arrival-board { min-width: 255px; max-width: 330px; margin-top: 8px; }
     .arrival-heading { margin: 7px 0 3px; font-weight: 700; border-top: 1px solid #ddd; padding-top: 6px; }
-    .arrival-row { display: grid; grid-template-columns: minmax(86px, 150px) minmax(130px, 1fr) minmax(62px, 74px) auto; gap: 16px; align-items: center; padding: 4px 0; }
+    .arrival-row { display: grid; grid-template-columns: minmax(76px, 120px) minmax(120px, 1fr) 58px 66px; gap: 12px; align-items: center; padding: 4px 0; }
     .arrival-line { font-weight: 700; }
     .arrival-destination { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .arrival-time { font-weight: 700; white-space: nowrap; }
+    .arrival-time { font-weight: 700; white-space: nowrap; text-align: right; }
     .arrival-note { color: #666; font-size: 12px; margin-top: 5px; }
-    .arrival-track { color: #555; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .arrival-track { color: #555; font-size: 12px; font-weight: 700; white-space: nowrap; text-align: right; }
     .delay-alert-list { margin: 3px 0 6px 20px; padding: 0; }
     .delay-alert-list li { margin: 2px 0; }
     .station-alert-list { margin: 3px 0 8px 20px; padding: 0; }
@@ -174,8 +174,8 @@
     .scheduled-time-row,
     .upcoming-stop-row {
       display: grid;
-      grid-template-columns: minmax(86px, 150px) minmax(130px, 1fr) minmax(62px, 74px) auto;
-      gap: 16px;
+      grid-template-columns: minmax(76px, 120px) minmax(120px, 1fr) 58px 66px;
+      gap: 12px;
       align-items: center;
       padding: 4px 0;
     }
@@ -392,6 +392,11 @@
 
     .sheet-detail > strong:first-child { font-size: 24px; }
     .sheet-detail .arrival-board { max-width: none; }
+    .sheet-detail .arrival-row,
+    .sheet-detail .scheduled-time-row,
+    .sheet-detail .upcoming-stop-row {
+      grid-template-columns: minmax(115px, 210px) minmax(170px, 1fr) 110px 120px;
+    }
 
     body.dark-mode .sheet-backdrop {
       background: rgba(3, 8, 13, 0.58);
@@ -462,6 +467,12 @@
       .sheet-choice { grid-template-columns: 54px 1fr 22px; gap: 12px; padding: 13px 14px; }
       .sheet-choice-title { font-size: 17px; }
       .sheet-choice-subtitle { font-size: 14px; }
+      .sheet-detail .arrival-row,
+      .sheet-detail .scheduled-time-row,
+      .sheet-detail .upcoming-stop-row {
+        grid-template-columns: minmax(72px, 96px) minmax(108px, 1fr) 62px 74px;
+        gap: 8px;
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -480,7 +491,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.82';
+    const APP_VERSION = 'Beta 1.83';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
