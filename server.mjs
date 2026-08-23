@@ -272,27 +272,35 @@ function alertMatchesVehicle(alert, vehicle) {
   return false;
 }
 
-function delayReasonFromAlerts(vehicle, alerts) {
+function uniqueAlertTexts(alerts) {
+  const seen = new Set();
+  return alerts.map((alert) => alert.text).filter((text) => {
+    const key = String(text || '').trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function delayReasonsFromAlerts(vehicle, alerts) {
   const trainNumber = normalizeTrainNumber(vehicle.label || vehicle.id);
-  const exactTrainAlert = alerts.find((alert) =>
-    trainNumber &&
-    alert.trainNumbers.has(trainNumber) &&
-    alert.delayRelated
+  const tripId = String(vehicle.tripId || '').trim();
+  const exactAlerts = alerts.filter((alert) =>
+    (trainNumber && alert.trainNumbers.has(trainNumber)) ||
+    (tripId && alert.tripIds.has(tripId))
   );
-  if (exactTrainAlert) return exactTrainAlert.text;
 
-  const exactTripAlert = alerts.find((alert) =>
-    String(vehicle.tripId || '').trim() &&
-    alert.tripIds.has(String(vehicle.tripId || '').trim()) &&
-    alert.delayRelated
-  );
-  if (exactTripAlert) return exactTripAlert.text;
+  if (exactAlerts.length) {
+    return uniqueAlertTexts(exactAlerts.sort((first, second) =>
+      Number(second.delayRelated) - Number(first.delayRelated)
+    ));
+  }
 
-  const routeDelayAlert = alerts.find((alert) =>
+  const routeDelayAlerts = alerts.filter((alert) =>
     alert.delayRelated &&
     alertMatchesVehicle(alert, vehicle)
   );
-  return routeDelayAlert?.text || '';
+  return uniqueAlertTexts(routeDelayAlerts);
 }
 
 async function fetchPublicMetrolinkAndAmtrakVehicles() {
@@ -398,10 +406,11 @@ async function getCachedMetrolinkVehicles() {
         : publicMetrolinkVehicles;
       const amtrakVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'amtrak');
       const vehicles = enrichedOfficialVehicles.concat(fallbackMetrolinkVehicles, amtrakVehicles).map((vehicle) => {
-        const alertReason = delayReasonFromAlerts(vehicle, delayAlerts);
+        const alertReasons = delayReasonsFromAlerts(vehicle, delayAlerts);
         return {
           ...vehicle,
-          delayReason: alertReason || vehicle.delayReason || ''
+          delayReason: alertReasons[0] || vehicle.delayReason || '',
+          delayReasons: alertReasons.length ? alertReasons : []
         };
       });
 

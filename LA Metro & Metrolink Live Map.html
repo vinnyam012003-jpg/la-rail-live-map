@@ -105,6 +105,8 @@
     .arrival-time { font-weight: 700; white-space: nowrap; }
     .arrival-note { color: #666; font-size: 12px; margin-top: 5px; }
     .arrival-track { color: #555; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .delay-alert-list { margin: 3px 0 6px 20px; padding: 0; }
+    .delay-alert-list li { margin: 2px 0; }
     .scheduled-destination { margin-top: 9px; color: #20272d; font-weight: 700; }
     .scheduled-time-row,
     .upcoming-stop-row {
@@ -359,7 +361,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.62';
+    const APP_VERSION = 'Beta 1.63';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1516,13 +1518,34 @@
       return '<span class="train-delay-dot ' + delayClass + '" title="' + label + '"></span>';
     }
 
-    function delayReasonForTrain(vehicle) {
-      if (vehicle.agency !== 'metrolink' && vehicle.agency !== 'amtrak') return '';
+    function delayReasonsForTrain(vehicle) {
+      if (vehicle.agency !== 'metrolink' && vehicle.agency !== 'amtrak') return [];
       const status = String(vehicle.delayStatus || '').trim();
-      if (!status || /on\s*time|early|normal|good/i.test(status)) return '';
+      if (!status || /on\s*time|early|normal|good/i.test(status)) return [];
+      const reasons = Array.isArray(vehicle.delayReasons)
+        ? vehicle.delayReasons.map((reason) => String(reason || '').trim()).filter(Boolean)
+        : [];
+      if (reasons.length) {
+        const seen = new Set();
+        return reasons.filter((reason) => {
+          const key = reason.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
       const reason = String(vehicle.delayReason || '').trim();
-      if (reason && reason.toLowerCase() !== status.toLowerCase()) return reason;
-      return status && !/^delayed$/i.test(status) ? status : 'Delay';
+      if (reason && reason.toLowerCase() !== status.toLowerCase()) return [reason];
+      return [status && !/^delayed$/i.test(status) ? status : 'Delay'];
+    }
+
+    function delayHtmlForTrain(vehicle) {
+      const reasons = delayReasonsForTrain(vehicle);
+      if (!reasons.length) return '';
+      if (reasons.length === 1) return 'Delay: ' + escapeHtml(reasons[0]) + '<br>';
+      return 'Delay:<ul class="delay-alert-list">' +
+        reasons.map((reason) => '<li>' + escapeHtml(reason) + '</li>').join('') +
+        '</ul>';
     }
 
     function stationSheetIcon() {
@@ -1666,7 +1689,7 @@
       const nextStop = nextStopForTrain(vehicle);
       const nextStopTrack = nextStop ? trackForMetrolinkStop(vehicle, nextStop.name, metrolinkSchedule) : '';
       const upcomingStops = upcomingStopsForTrain(vehicle, metrolinkSchedule);
-      const delayReason = delayReasonForTrain(vehicle);
+      const delayHtml = delayHtmlForTrain(vehicle);
       const upcomingStopList = upcomingStops.length
         ? '<div class="arrival-heading">Upcoming stops</div>' +
           upcomingStops.map(function (stop) {
@@ -1685,7 +1708,7 @@
         (nextStop ? 'Next station: ' + escapeHtml(nextStop.name) + '<br>' +
           (nextStopTrack ? 'Track: ' + escapeHtml(nextStopTrack) + '<br>' : '') +
           'Arrives in: ' + formatArrivalTime(nextStop.time) + '<br>' : '') +
-        (delayReason ? 'Delay: ' + escapeHtml(delayReason) + '<br>' : '') +
+        delayHtml +
         'Updated: ' + updated +
         upcomingStopList;
     }
@@ -1952,6 +1975,7 @@
             stopId: vehicle.stopId || '',
             delayStatus: vehicle.delayStatus || '',
             delayReason: vehicle.delayReason || '',
+            delayReasons: Array.isArray(vehicle.delayReasons) ? vehicle.delayReasons : [],
             timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
           };
           const tripUpdate = metrolinkTripUpdatesByTripId.get(String(mappedVehicle.tripId || ''));
