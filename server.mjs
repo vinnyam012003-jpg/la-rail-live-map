@@ -66,6 +66,19 @@ const metroGjSchedulePath = join(root, 'data', 'metro-gj-schedule.json');
 const prebuiltScheduleCache = {
   metroGj: { loadedAt: 0, value: null, pending: null }
 };
+const metroRailAndBrtRouteIds = new Set([
+  '801', '802', '803', '804', '805', '807', '808',
+  '901', '910', '950',
+  'A', 'B', 'C', 'D', 'E', 'G', 'J', 'K'
+]);
+const busLimits = {
+  maxRoutesPerViewer: 2,
+  maxServerRoutes: 20,
+  maxServerVehicles: 250,
+  maxVehiclesPerViewer: 120,
+  selectionTtlMs: 5 * 60 * 1000
+};
+const busViewerSelections = new Map();
 const scheduleHorizonSeconds = 6 * 60 * 60;
 const metroRailServiceDayStartHour = 4;
 const scheduleTimeZone = 'America/Los_Angeles';
@@ -82,7 +95,7 @@ const telemetry = {
   metrolinkLiveFetches: 0,
   metrolinkCacheHits: 0,
   feedStatus: new Map(),
-  vehicleCounts: { metro: 0, metrolink: 0, amtrak: 0 },
+  vehicleCounts: { metro: 0, metroBus: 0, metrolink: 0, amtrak: 0 },
   scheduleSources: new Map()
 };
 let telemetrySaveTimer = null;
@@ -111,6 +124,16 @@ function endpointName(pathname) {
   if (pathname.startsWith('/api/')) return pathname;
   if (pathname === '/dev-status') return '/dev-status';
   return pathname || 'unknown';
+}
+
+function ensureViewerId(request, response) {
+  const cookies = parseCookies(request.headers.cookie || '');
+  let viewerId = cookies.get('larail_viewer');
+  if (!viewerId || !/^[a-f0-9]{32}$/.test(viewerId)) {
+    viewerId = randomBytes(16).toString('hex');
+    appendSetCookie(response, `larail_viewer=${viewerId}; Path=/; Max-Age=31536000; SameSite=Lax`);
+  }
+  return viewerId;
 }
 
 function pruneTelemetry() {
@@ -163,12 +186,7 @@ function recordRequest(request, response, url) {
 
   if (endpoint === '/dev-status' || endpoint.startsWith('/favicon') || endpoint.startsWith('/icon-')) return;
 
-  const cookies = parseCookies(request.headers.cookie || '');
-  let viewerId = cookies.get('larail_viewer');
-  if (!viewerId || !/^[a-f0-9]{32}$/.test(viewerId)) {
-    viewerId = randomBytes(16).toString('hex');
-    appendSetCookie(response, `larail_viewer=${viewerId}; Path=/; Max-Age=31536000; SameSite=Lax`);
-  }
+  const viewerId = ensureViewerId(request, response);
   const viewer = telemetry.viewers.get(viewerId) || { firstSeen: now, lastSeen: now };
   viewer.lastSeen = now;
   telemetry.viewers.set(viewerId, viewer);
@@ -806,6 +824,83 @@ function parseMetroVehicles(messages) {
       });
   telemetry.vehicleCounts.metro = vehicles.length;
   return { vehicles };
+}
+
+function normalizeBusRouteId(routeId) {
+  return normalizeMetroRouteId(routeId)
+    .replace(/\s+LINE$/i, '')
+    .replace(/^LINE\s+/i, '')
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+function isMetroBusRoute(routeId) {
+  const normalized = normalizeBusRouteId(routeId);
+  return Boolean(normalized) && !metroRailAndBrtRouteIds.has(normalized);
+}
+
+function parseBusRouteList(value) {
+  return Array.from(new Set(String(value || '')
+    .split(/[,\s]+/)
+    .map(normalizeBusRouteId)
+    .filter(isMetroBusRoute)));
+}
+
+function pruneBusSelections() {
+  const cutoff = Date.now() - busLimits.selectionTtlMs;
+  for (const [viewerId, selection] of busViewerSelections.entries()) {
+    if (!selection?.lastSeen || selection.lastSeen < cutoff || !selection.routes?.length) {
+      busViewerSelections.delete(viewerId);
+    }
+  }
+}
+
+function activeBusRoutesExcluding(viewerId) {
+  pruneBusSelections();
+  const activeRoutes = new Set();
+  for (const [selectionViewerId, selection] of busViewerSelections.entries()) {
+    if (selectionViewerId === viewerId) continue;
+    (selection.routes || []).forEach((route) => activeRoutes.add(route));
+  }
+  return activeRoutes;
+}
+
+function parseBbox(value) {
+  const parts = String(value || '').split(',').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part))) return null;
+  const [west, south, east, north] = parts;
+  if (west >= east || south >= north) return null;
+  return { west, south, east, north };
+}
+
+function vehicleInsideBbox(vehicle, bbox) {
+  if (!bbox) return true;
+  return vehicle.longitude >= bbox.west && vehicle.longitude <= bbox.east &&
+    vehicle.latitude >= bbox.south && vehicle.latitude <= bbox.north;
+}
+
+function trimMetroBusVehicle(vehicle) {
+  return {
+    id: vehicle.id,
+    label: vehicle.label || vehicle.id,
+    tripId: vehicle.tripId || '',
+    routeId: normalizeBusRouteId(vehicle.routeId),
+    rawRouteId: vehicle.rawRouteId || '',
+    direction: vehicle.direction ?? '',
+    currentStopSequence: vehicle.currentStopSequence ?? null,
+    currentStatus: vehicle.currentStatus ?? '',
+    stopId: vehicle.stopId || '',
+    latitude: vehicle.latitude,
+    longitude: vehicle.longitude,
+    bearing: vehicle.bearing ?? null,
+    speed: vehicle.speed ?? null,
+    timestamp: vehicle.timestamp ?? null
+  };
+}
+
+function countBusVehiclesForRoutes(busVehicles, routes) {
+  const routeSet = new Set(routes);
+  return busVehicles.filter((vehicle) => routeSet.has(normalizeBusRouteId(vehicle.routeId))).length;
 }
 
 function parseMetroTripUpdates(messages) {
@@ -1492,6 +1587,111 @@ async function sendMetroVehicles(response) {
   }
 }
 
+async function sendMetroBusVehicles(request, response, requestUrl) {
+  try {
+    const viewerId = ensureViewerId(request, response);
+    const routes = parseBusRouteList(requestUrl.searchParams.get('routes'));
+    const bbox = parseBbox(requestUrl.searchParams.get('bbox'));
+
+    if (!routes.length) {
+      busViewerSelections.delete(viewerId);
+      sendJson(response, 200, {
+        updatedAt: new Date().toISOString(),
+        vehicles: [],
+        routes: [],
+        limits: busLimits,
+        status: 'No bus routes selected'
+      });
+      return;
+    }
+
+    if (routes.length > busLimits.maxRoutesPerViewer) {
+      sendJson(response, 400, {
+        updatedAt: new Date().toISOString(),
+        vehicles: [],
+        routes: [],
+        limits: busLimits,
+        errors: { bus: `Choose up to ${busLimits.maxRoutesPerViewer} bus lines at a time.` }
+      });
+      return;
+    }
+
+    const payload = await getCachedMetroFeed('vehicles', parseMetroVehicles);
+    const allBusVehicles = (payload.vehicles || [])
+      .filter((vehicle) => isMetroBusRoute(vehicle.routeId) && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude))
+      .map(trimMetroBusVehicle);
+
+    telemetry.vehicleCounts.metroBus = allBusVehicles.length;
+
+    const activeRoutes = activeBusRoutesExcluding(viewerId);
+    routes.forEach((route) => activeRoutes.add(route));
+
+    if (activeRoutes.size > busLimits.maxServerRoutes) {
+      sendJson(response, 429, {
+        updatedAt: new Date().toISOString(),
+        vehicles: [],
+        routes,
+        limits: busLimits,
+        activeServerRoutes: activeRoutes.size,
+        errors: { bus: 'Too many active bus lines right now. Unselect other routes or try again in a few minutes.' }
+      });
+      return;
+    }
+
+    const activeServerVehicles = countBusVehiclesForRoutes(allBusVehicles, activeRoutes);
+    if (activeServerVehicles > busLimits.maxServerVehicles) {
+      sendJson(response, 429, {
+        updatedAt: new Date().toISOString(),
+        vehicles: [],
+        routes,
+        limits: busLimits,
+        activeServerRoutes: activeRoutes.size,
+        activeServerVehicles,
+        errors: { bus: 'Too many vehicles. Unselect other routes to view this bus line.' }
+      });
+      return;
+    }
+
+    const selectedRouteSet = new Set(routes);
+    const viewerVehiclesBeforeBbox = allBusVehicles.filter((vehicle) => selectedRouteSet.has(vehicle.routeId));
+    if (viewerVehiclesBeforeBbox.length > busLimits.maxVehiclesPerViewer) {
+      sendJson(response, 429, {
+        updatedAt: new Date().toISOString(),
+        vehicles: [],
+        routes,
+        limits: busLimits,
+        activeServerRoutes: activeRoutes.size,
+        activeServerVehicles,
+        errors: { bus: 'Too many vehicles. Unselect other routes to view this bus line.' }
+      });
+      return;
+    }
+
+    const vehicles = viewerVehiclesBeforeBbox.filter((vehicle) => vehicleInsideBbox(vehicle, bbox));
+    busViewerSelections.set(viewerId, { routes, lastSeen: Date.now() });
+
+    sendJson(response, 200, {
+      updatedAt: payload.updatedAt || new Date().toISOString(),
+      cacheAgeMs: payload.cacheAgeMs,
+      cacheSeconds: payload.cacheSeconds,
+      routes,
+      vehicles,
+      limits: busLimits,
+      activeServerRoutes: activeRoutes.size,
+      activeServerVehicles,
+      totalBusVehicles: allBusVehicles.length,
+      errors: payload.errors || {}
+    });
+  } catch (error) {
+    addAppLog('feed-error', `metro bus vehicles: ${error.message}`);
+    sendJson(response, 503, {
+      updatedAt: new Date().toISOString(),
+      vehicles: [],
+      errors: { bus: error.message }
+    });
+  }
+}
+
 async function sendMetroTripUpdates(response) {
   try {
     const payload = await getCachedMetroFeed('tripUpdates', parseMetroTripUpdates);
@@ -1673,6 +1873,11 @@ function telemetrySnapshot() {
       ['Metrolink GTFS', cacheAgeFor(staticScheduleCache.metrolink)],
       ['Metro G/J schedule', cacheAgeFor(prebuiltScheduleCache.metroGj)]
     ],
+    busLimits,
+    busSelections: {
+      activeViewers: busViewerSelections.size,
+      activeRoutes: Array.from(activeBusRoutesExcluding('')).sort()
+    },
     logs: telemetry.appLogs.slice(-40).reverse()
   };
 }
@@ -1845,6 +2050,11 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/api/metro/vehicles') {
       await sendMetroVehicles(response);
+      return;
+    }
+
+    if (url.pathname === '/api/metro/bus/vehicles') {
+      await sendMetroBusVehicles(request, response, url);
       return;
     }
 

@@ -79,12 +79,85 @@
       font: 13px/1.4 Arial, sans-serif;
     }
 
+    .bus-filter-control {
+      width: 218px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+      font: 12px/1.35 Arial, sans-serif;
+    }
+
+    .bus-filter-title {
+      margin-bottom: 6px;
+      font-weight: 800;
+      color: #20272d;
+    }
+
+    .bus-filter-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .bus-filter-input {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid #c8d0d8;
+      border-radius: 6px;
+      padding: 6px 7px;
+      font: inherit;
+    }
+
+    .bus-filter-button {
+      border: 0;
+      border-radius: 6px;
+      padding: 6px 8px;
+      background: #0b7f8f;
+      color: white;
+      font: 700 12px/1 Arial, sans-serif;
+      cursor: pointer;
+    }
+
+    .bus-filter-clear {
+      background: #69747f;
+    }
+
+    .bus-filter-message {
+      color: #606b75;
+      min-height: 16px;
+    }
+
+    .bus-filter-message.error {
+      color: #b00020;
+      font-weight: 700;
+    }
+
     body.dark-mode .map-title,
     body.dark-mode .live-status,
-    body.dark-mode .version-badge {
+    body.dark-mode .version-badge,
+    body.dark-mode .bus-filter-control {
       background: rgba(32, 39, 45, 0.92);
       color: #f4f6f8;
       border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    body.dark-mode .bus-filter-title {
+      color: #f4f6f8;
+    }
+
+    body.dark-mode .bus-filter-input {
+      background: #111820;
+      border-color: #3a434e;
+      color: #f4f6f8;
+    }
+
+    body.dark-mode .bus-filter-message {
+      color: #b7c4cf;
+    }
+
+    body.dark-mode .bus-filter-message.error {
+      color: #ffb4b4;
     }
 
     body.dark-mode .leaflet-control-zoom a {
@@ -146,6 +219,7 @@
     .train-marker.bus-marker { border-radius: 6px; }
     .train-marker.bus-marker.g-line { background: #e86a10; }
     .train-marker.bus-marker.j-line { background: #8a8a8a; }
+    .train-marker.bus-marker.local-bus-line { background: #1f6f4a; }
     .train-marker.bus-marker svg { width: 17px; height: 17px; display: block; }
     .train-marker.subway-marker.b-line { background: #e52329; }
     .train-marker.subway-marker.d-line { background: #a05da5; }
@@ -491,7 +565,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.83';
+    const APP_VERSION = 'Beta 1.84';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1914,6 +1988,7 @@
     const trainMarkers = new Map();
     const agencyMarkerIds = {
       metro: new Set(),
+      metroBus: new Set(),
       metrolink: new Set(),
       amtrak: new Set()
     };
@@ -1924,6 +1999,10 @@
     ]);
     let openMetroSockets = 0;
     let metroStatus = 'connecting';
+    let busStatus = 'off';
+    let busFilterInput = null;
+    let busFilterMessage = null;
+    let selectedBusRoutes = new Set();
     let metrolinkStatus = 'checking';
     let lastLiveUpdate = null;
 
@@ -2005,7 +2084,85 @@
     };
     modeControl.addTo(map);
 
+    const busFilterControl = L.control({ position: 'topleft' });
+    busFilterControl.onAdd = function () {
+      const container = L.DomUtil.create('div', 'bus-filter-control');
+      container.innerHTML =
+        '<div class="bus-filter-title">Metro bus lines</div>' +
+        '<div class="bus-filter-row">' +
+          '<input class="bus-filter-input" type="text" inputmode="text" placeholder="20, 720" aria-label="Metro bus routes">' +
+          '<button class="bus-filter-button" type="button">Show</button>' +
+          '<button class="bus-filter-button bus-filter-clear" type="button">Clear</button>' +
+        '</div>' +
+        '<div class="bus-filter-message">Choose up to 2 bus lines.</div>';
+      busFilterInput = container.querySelector('.bus-filter-input');
+      busFilterMessage = container.querySelector('.bus-filter-message');
+      L.DomEvent.disableClickPropagation(container);
+      L.DomEvent.disableScrollPropagation(container);
+      container.querySelector('.bus-filter-button:not(.bus-filter-clear)').addEventListener('click', applyBusFilter);
+      container.querySelector('.bus-filter-clear').addEventListener('click', clearBusFilter);
+      busFilterInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') applyBusFilter();
+      });
+      return container;
+    };
+    busFilterControl.addTo(map);
+
+    function normalizeBusRouteInput(route) {
+      return String(route || '').trim().replace(/\s+/g, '').toUpperCase();
+    }
+
+    function busRoutesFromInput(value) {
+      const routes = [];
+      const seen = new Set();
+      String(value || '').split(/[,\s]+/).forEach(function (route) {
+        const normalized = normalizeBusRouteInput(route);
+        if (!normalized || railRouteIds.has(normalized)) return;
+        if (!seen.has(normalized)) {
+          seen.add(normalized);
+          routes.push(normalized);
+        }
+      });
+      return routes;
+    }
+
+    function setBusFilterMessage(message, isError) {
+      if (!busFilterMessage) return;
+      busFilterMessage.textContent = message || '';
+      busFilterMessage.classList.toggle('error', Boolean(isError));
+    }
+
+    function currentMapBboxParam() {
+      const bounds = map.getBounds();
+      return [
+        bounds.getWest().toFixed(6),
+        bounds.getSouth().toFixed(6),
+        bounds.getEast().toFixed(6),
+        bounds.getNorth().toFixed(6)
+      ].join(',');
+    }
+
+    function applyBusFilter() {
+      const routes = busRoutesFromInput(busFilterInput ? busFilterInput.value : '');
+      if (routes.length > 2) {
+        setBusFilterMessage('Choose up to 2 bus lines at a time.', true);
+        return;
+      }
+      updateMetroBusVehicles(routes);
+    }
+
+    function clearBusFilter() {
+      selectedBusRoutes.clear();
+      if (busFilterInput) busFilterInput.value = '';
+      busStatus = 'off';
+      setBusFilterMessage('Choose up to 2 bus lines.', false);
+      removeAgencyMarkersNotIn('metroBus', new Set());
+      fetch('/api/metro/bus/vehicles?routes=', { cache: 'no-store' }).catch(function () {});
+      updateLiveStatus();
+    }
+
     function shouldShowVehicle(vehicle) {
+      if (vehicle.agency === 'metroBus') return selectedBusRoutes.has(String(vehicle.routeId || '').toUpperCase());
       return vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak' || railRouteIds.has(vehicle.routeId);
     }
 
@@ -2015,13 +2172,13 @@
       const isJLine = routeId === 'J' || routeId === '910' || routeId === '950';
       const isBLine = routeId === 'B' || routeId === '802';
       const isDLine = routeId === 'D' || routeId === '805';
-      const isBus = vehicle.agency === 'metro' && (isGLine || isJLine);
+      const isBus = vehicle.agency === 'metroBus' || (vehicle.agency === 'metro' && (isGLine || isJLine));
       const isSubway = vehicle.agency === 'metro' && (isBLine || isDLine);
       let markerClass = vehicle.agency;
       let markerContent = 'T';
 
       if (isBus) {
-        markerClass = 'metro bus-marker ' + (isGLine ? 'g-line' : 'j-line');
+        markerClass = 'metro bus-marker ' + (vehicle.agency === 'metroBus' ? 'local-bus-line' : isGLine ? 'g-line' : 'j-line');
         markerContent = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="2" width="16" height="17" rx="3" fill="white"/><rect x="6" y="5" width="12" height="6" rx="1" fill="#333"/><rect x="6" y="13" width="3" height="2" rx="1" fill="#333"/><rect x="15" y="13" width="3" height="2" rx="1" fill="#333"/><circle cx="8" cy="20" r="2" fill="#333"/><circle cx="16" cy="20" r="2" fill="#333"/></svg>';
       } else if (isSubway) {
         markerClass = 'metro subway-marker ' + (isBLine ? 'b-line' : 'd-line');
@@ -2101,6 +2258,7 @@
     function vehicleDisplayName(vehicle) {
       if (vehicle.agency === 'metrolink') return 'Metrolink train ' + escapeHtml(vehicle.label || vehicle.id);
       if (vehicle.agency === 'amtrak') return 'Amtrak train ' + escapeHtml(vehicle.label || vehicle.id);
+      if (vehicle.agency === 'metroBus') return 'LA Metro bus ' + escapeHtml(vehicle.routeId || vehicle.label || vehicle.id);
       return 'LA Metro ' + escapeHtml(metroLineName(vehicle.routeId)) + ' Line vehicle';
     }
 
@@ -2221,6 +2379,7 @@
 
     function popupFor(vehicle, metrolinkSchedule = []) {
       const title = vehicle.agency === 'metro' ? 'LA Metro ' + metroLineName(vehicle.routeId) + ' Line'
+        : vehicle.agency === 'metroBus' ? 'LA Metro Bus ' + (vehicle.routeId || '')
         : vehicle.agency === 'amtrak' ? 'Amtrak train'
         : 'Metrolink train';
       const updated = vehicle.timestamp
@@ -2255,10 +2414,11 @@
     }
 
     function updateLiveStatus() {
-      const total = agencyMarkerIds.metro.size + agencyMarkerIds.metrolink.size + agencyMarkerIds.amtrak.size;
+      const total = agencyMarkerIds.metro.size + agencyMarkerIds.metroBus.size + agencyMarkerIds.metrolink.size + agencyMarkerIds.amtrak.size;
       statusControl.element.innerHTML =
         '<strong>Live vehicles: ' + total + '</strong><br>' +
         'Metro: ' + agencyMarkerIds.metro.size + ' (' + metroStatus + ')<br>' +
+        'Bus: ' + agencyMarkerIds.metroBus.size + ' (' + busStatus + ')<br>' +
         'Metrolink: ' + agencyMarkerIds.metrolink.size + ' (' + metrolinkStatus + ')<br>' +
         'Amtrak: ' + agencyMarkerIds.amtrak.size + ' (' + metrolinkStatus + ')' +
         (lastLiveUpdate ? '<br>Updated ' + lastLiveUpdate.toLocaleTimeString() : '');
@@ -2338,6 +2498,67 @@
         metroStatus = 'connected via API key';
       } catch (error) {
         metroStatus = error.message || 'connection error';
+      }
+      updateLiveStatus();
+    }
+
+    async function updateMetroBusVehicles(nextRoutes) {
+      const routes = Array.isArray(nextRoutes) ? nextRoutes : Array.from(selectedBusRoutes);
+      if (!routes.length) {
+        clearBusFilter();
+        return;
+      }
+
+      setBusFilterMessage('Loading bus vehicles…', false);
+      try {
+        const params = new URLSearchParams({
+          routes: routes.join(','),
+          bbox: currentMapBboxParam()
+        });
+        const response = await fetch('/api/metro/bus/vehicles?' + params.toString(), { cache: 'no-store' });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.errors?.bus || 'Bus feed returned HTTP ' + response.status);
+
+        const acceptedRoutes = (payload.routes || routes).map(normalizeBusRouteInput).filter(Boolean);
+        selectedBusRoutes = new Set(acceptedRoutes);
+        if (busFilterInput) busFilterInput.value = acceptedRoutes.join(', ');
+
+        const vehicles = (payload.vehicles || []).map(function (vehicle) {
+          return {
+            agency: 'metroBus',
+            id: vehicle.id,
+            label: vehicle.label || vehicle.id,
+            tripId: vehicle.tripId || '',
+            routeId: String(vehicle.routeId || ''),
+            direction: vehicle.direction ?? '',
+            currentStopSequence: vehicle.currentStopSequence ?? null,
+            currentStatus: vehicle.currentStatus ?? '',
+            stopId: vehicle.stopId || '',
+            latitude: Number(vehicle.latitude),
+            longitude: Number(vehicle.longitude),
+            bearing: vehicle.bearing ?? null,
+            speed: vehicle.speed ?? null,
+            timestamp: vehicle.timestamp ? Number(vehicle.timestamp) : null
+          };
+        }).filter(function (vehicle) {
+          return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude) &&
+            shouldShowVehicle(vehicle);
+        });
+
+        const activeBusIds = new Set(vehicles.map((vehicle) => 'metroBus:' + vehicle.id));
+        vehicles.forEach(function (vehicle) {
+          upsertLiveVehicle(vehicle);
+        });
+        removeAgencyMarkersNotIn('metroBus', activeBusIds);
+        busStatus = acceptedRoutes.length ? acceptedRoutes.join(', ') + ' cached' : 'off';
+        setBusFilterMessage(
+          vehicles.length + ' bus vehicles shown. Server routes: ' + (payload.activeServerRoutes ?? acceptedRoutes.length) + '/20.',
+          false
+        );
+      } catch (error) {
+        busStatus = error.message || 'bus error';
+        removeAgencyMarkersNotIn('metroBus', new Set());
+        setBusFilterMessage(error.message || 'Bus line could not be loaded.', true);
       }
       updateLiveStatus();
     }
@@ -2588,6 +2809,12 @@
     updateMetroTripUpdates();
     setInterval(updateMetroTripUpdates, 30000);
     setInterval(removeStaleMetroVehicles, 30000);
+    setInterval(function () {
+      if (selectedBusRoutes.size) updateMetroBusVehicles();
+    }, 30000);
+    map.on('moveend', function () {
+      if (selectedBusRoutes.size) updateMetroBusVehicles();
+    });
     updateLiveStatus();
 
     updateMetrolinkTrains();
