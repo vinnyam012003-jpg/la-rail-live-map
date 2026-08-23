@@ -44,8 +44,8 @@
 
     .developer-info-button {
       display: grid;
-      width: 40px;
-      height: 40px;
+      width: 34px;
+      height: 34px;
       padding: 0;
       border: 0;
       border-radius: 50%;
@@ -55,8 +55,8 @@
 
     .developer-info-button svg {
       display: block;
-      width: 40px;
-      height: 40px;
+      width: 34px;
+      height: 34px;
       filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.3));
     }
 
@@ -396,7 +396,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.70';
+    const APP_VERSION = 'Beta 1.71';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1818,7 +1818,8 @@
     }
 
     function vehicleChoiceSubtitle(vehicle) {
-      const destination = destinationForTrain(vehicle);
+      const upcomingStops = upcomingStopsForTrain(vehicle);
+      const destination = destinationFromUpcomingStops(vehicle, upcomingStops) || destinationForTrain(vehicle);
       const nextStop = nextStopForTrain(vehicle);
       if (destination) return 'To ' + escapeHtml(destination);
       if (nextStop?.name) return 'Next station: ' + escapeHtml(nextStop.name);
