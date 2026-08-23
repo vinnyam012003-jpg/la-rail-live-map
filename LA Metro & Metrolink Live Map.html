@@ -36,6 +36,34 @@
       font: 700 12px/1.2 Arial, sans-serif;
     }
 
+    .developer-info-control {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .developer-info-button {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .developer-info-button svg {
+      display: block;
+      width: 40px;
+      height: 40px;
+      filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.3));
+    }
+
+    .developer-info-control.collapsed .live-status {
+      display: none;
+    }
+
     .live-status {
       min-width: 190px;
       padding: 8px 10px;
@@ -368,7 +396,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.68';
+    const APP_VERSION = 'Beta 1.69';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -990,7 +1018,7 @@
         '801': ['Pomona North', 'Long Beach'],
         '802': ['Union Station', 'North Hollywood'],
         '803': ['Norwalk', 'LAX / Metro Transit Center'],
-        '804': ['Santa Monica', 'East Los Angeles'],
+        '804': ['Downtown Santa Monica', 'East Los Angeles'],
         '805': ['Wilshire / La Cienega', 'Union Station'],
         '807': ['Expo / Crenshaw', 'Redondo Beach'],
         '808': ['Expo / Crenshaw', 'Redondo Beach'],
@@ -1012,7 +1040,7 @@
       if (route === '801' || route === 'A') return isEastbound || isNorthbound ? 'Pomona North' : 'Long Beach';
       if (route === '802' || route === 'B') return isNorthbound ? 'North Hollywood' : 'Union Station';
       if (route === '803' || route === 'C') return isEastbound ? 'Norwalk' : 'LAX / Metro Transit Center';
-      if (route === '804' || route === 'E') return isEastbound ? 'East Los Angeles' : 'Santa Monica';
+      if (route === '804' || route === 'E') return isEastbound ? 'East Los Angeles' : 'Downtown Santa Monica';
       if (route === '805' || route === 'D') return isEastbound ? 'Union Station' : 'Wilshire / La Cienega';
       if (route === '807' || route === '808' || route === 'K') return isNorthbound ? 'Expo / Crenshaw' : 'Redondo Beach';
       if (route === '901' || route === 'G') return isEastbound ? 'North Hollywood' : 'Chatsworth';
@@ -1646,9 +1674,37 @@
 
     const statusControl = L.control({ position: 'bottomleft' });
     statusControl.onAdd = function () {
-      this.element = L.DomUtil.create('div', 'live-status');
+      this.container = L.DomUtil.create('div', 'developer-info-control');
+      this.button = L.DomUtil.create('button', 'developer-info-button', this.container);
+      this.button.type = 'button';
+      this.button.setAttribute('aria-label', 'Hide developer info');
+      this.button.setAttribute('aria-pressed', 'false');
+      this.button.innerHTML =
+        '<svg viewBox="-40 -40 80 80" aria-hidden="true" focusable="false">' +
+          '<circle cx="0" cy="0" r="34" fill="#303841"/>' +
+          '<g transform="translate(4 0)" fill="#aeb5bc" fill-rule="evenodd">' +
+            '<path d="M-20 -24 H1 C15 -24 20 -13 20 0 C20 13 15 24 1 24 H-20 Z M-6 -11 V11 H0 C7 11 9 6 9 0 C9 -6 7 -11 0 -11 Z"/>' +
+          '</g>' +
+          '<g transform="translate(1 0)" fill="#f8f9fa">' +
+            '<circle cx="4.5" cy="-8.5" r="3"/>' +
+            '<rect x="1.5" y="-2" width="6" height="17" rx="3"/>' +
+          '</g>' +
+        '</svg>';
+      this.element = L.DomUtil.create('div', 'live-status', this.container);
       this.element.textContent = 'Live vehicles: connecting...';
-      return this.element;
+      const collapsed = localStorage.getItem('developerInfoCollapsed') === 'true';
+      this.container.classList.toggle('collapsed', collapsed);
+      this.button.setAttribute('aria-label', collapsed ? 'Show developer info' : 'Hide developer info');
+      this.button.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
+      L.DomEvent.disableClickPropagation(this.container);
+      L.DomEvent.on(this.button, 'click', function () {
+        const nextCollapsed = !statusControl.container.classList.contains('collapsed');
+        statusControl.container.classList.toggle('collapsed', nextCollapsed);
+        statusControl.button.setAttribute('aria-label', nextCollapsed ? 'Show developer info' : 'Hide developer info');
+        statusControl.button.setAttribute('aria-pressed', nextCollapsed ? 'true' : 'false');
+        localStorage.setItem('developerInfoCollapsed', String(nextCollapsed));
+      });
+      return this.container;
     };
     statusControl.addTo(map);
 
