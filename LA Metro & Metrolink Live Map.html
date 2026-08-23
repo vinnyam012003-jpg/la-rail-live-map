@@ -368,7 +368,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.65';
+    const APP_VERSION = 'Beta 1.66';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -862,22 +862,14 @@
       ].map(normalizeMetrolinkRouteKey).filter(Boolean);
     }
 
-    function commuterVehicleMatchesStationLine(vehicle, routeKeys) {
-      return routeKeysForCommuterVehicle(vehicle).some((routeKey) => routeKeys.has(routeKey));
-    }
-
-    function alertMatchesCommuterVehicle(alert, vehicle) {
-      const trainNumber = normalizeTrainNumber(vehicle.label || vehicle.id);
-      if (trainNumber && (alert.trainNumbers || []).some((number) => normalizeTrainNumber(number) === trainNumber)) return true;
-      const tripId = String(vehicle.tripId || '').trim();
-      if (tripId && (alert.tripIds || []).some((alertTripId) => String(alertTripId || '').trim() === tripId)) return true;
-      return false;
-    }
-
-    function delayedCommuterVehiclesForRouteKeys(routeKeys) {
-      return liveCommuterVehicles.filter(function (vehicle) {
-        return commuterVehicleLooksDelayed(vehicle) && commuterVehicleMatchesStationLine(vehicle, routeKeys);
-      });
+    function delayedTrainNumbersFromArrivals(arrivals = []) {
+      const delayedNumbers = new Set(liveCommuterVehicles
+        .filter(commuterVehicleLooksDelayed)
+        .map((vehicle) => normalizeTrainNumber(vehicle.label || vehicle.id))
+        .filter(Boolean));
+      return new Set(arrivals
+        .map((arrival) => normalizeTrainNumber(arrival.trainDesignation))
+        .filter((trainNumber) => trainNumber && delayedNumbers.has(trainNumber)));
     }
 
     function alertDisplayableAtStation(alert) {
@@ -901,14 +893,12 @@
       const trainDesignations = [...arrivals, ...scheduledRows]
         .map((arrival) => arrival.trainDesignation)
         .filter(Boolean);
-      const delayedLineVehicles = delayedCommuterVehiclesForRouteKeys(routeKeys);
 
       const matching = metrolinkAlerts.filter(function (alert) {
         if (!alertDisplayableAtStation(alert)) return false;
         if (alertHasStopMatch(alert, stopIds)) return true;
         if ((alert.category === 'delay' || alert.category === 'maintenance') && alertHasRouteMatch(alert, routeKeys)) return true;
-        if (trainDesignations.some((trainDesignation) => alertMatchesTrainDesignation(alert, trainDesignation))) return true;
-        return delayedLineVehicles.some((vehicle) => alertMatchesCommuterVehicle(alert, vehicle));
+        return trainDesignations.some((trainDesignation) => alertMatchesTrainDesignation(alert, trainDesignation));
       });
 
       return {
@@ -932,23 +922,34 @@
         stationAlertSection('Service alert', alertGroups.service);
     }
 
-    function stationHasActiveLineAlert(stationEntry) {
+    function stationHasActiveLineAlert(stationEntry, arrivals = []) {
       const routeKeys = metrolinkRouteKeysForCluster(stationEntry.cluster);
       if (!routeKeys.size) return false;
-      if (delayedCommuterVehiclesForRouteKeys(routeKeys).length) return true;
+      const delayedIncomingTrainNumbers = delayedTrainNumbersFromArrivals(arrivals);
+      if (delayedIncomingTrainNumbers.size) return true;
       return metrolinkAlerts.some(function (alert) {
         if (!alert.activeNow || !alertHasRouteMatch(alert, routeKeys)) return false;
         return alert.category === 'delay' || alert.category === 'maintenance';
       });
     }
 
-    function updateStationAlertMarkers() {
+    function updateStationAlertMarkers(stationArrivalsByName = new Map()) {
       stationEntries.forEach(function (entry) {
-        const active = stationHasActiveLineAlert(entry);
+        const active = stationHasActiveLineAlert(entry, stationArrivalsByName.get(entry.name) || []);
         if (entry.alertActive === active) return;
         entry.alertActive = active;
         entry.marker.setIcon(stationIcon(entry.shape, active));
       });
+    }
+
+    function buildStationCommuterArrivalsMap(schedule) {
+      const arrivalsByName = new Map();
+      stationEntries.forEach(function (entry) {
+        if (!entry.cluster.records.some((record) => record.agency === 'Metrolink')) return;
+        const arrivals = metrolinkArrivalsForCluster(entry.cluster, schedule);
+        if (arrivals.length) arrivalsByName.set(entry.name, arrivals);
+      });
+      return arrivalsByName;
     }
 
     function stationPopupHeader(name, services) {
@@ -2174,7 +2175,12 @@
           return vehicle.id && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude);
         });
         liveCommuterVehicles = vehicles;
-        updateStationAlertMarkers();
+        try {
+          const stationSchedule = await fetchMetrolinkSchedule();
+          updateStationAlertMarkers(buildStationCommuterArrivalsMap(stationSchedule));
+        } catch (error) {
+          updateStationAlertMarkers();
+        }
       } catch (error) {
         feedError = error.message;
         liveCommuterVehicles = [];
