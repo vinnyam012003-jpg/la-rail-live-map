@@ -396,7 +396,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.69';
+    const APP_VERSION = 'Beta 1.70';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1179,6 +1179,16 @@
       return rawDestination && !isDirectionOnly(rawDestination) ? rawDestination : '';
     }
 
+    function destinationFromUpcomingStops(vehicle, upcomingStops) {
+      if (vehicle.agency !== 'metro' || !Array.isArray(upcomingStops) || !upcomingStops.length) return '';
+      const routeId = String(vehicle.routeId || '').trim().toUpperCase();
+      const finalStopName = String(upcomingStops[upcomingStops.length - 1]?.name || '').trim();
+      if ((routeId === '804' || routeId === 'E') && /downtown\s+santa\s+monica/i.test(finalStopName)) {
+        return 'Downtown Santa Monica';
+      }
+      return '';
+    }
+
     function formatArrivalTime(timestamp) {
       const seconds = timestamp - Date.now() / 1000;
       if (seconds <= 75) return 'Due';
@@ -1928,10 +1938,10 @@
       const updated = vehicle.timestamp
         ? new Date(vehicle.timestamp * 1000).toLocaleTimeString()
         : 'Unknown';
-      const destination = destinationForTrain(vehicle);
       const nextStop = nextStopForTrain(vehicle);
       const nextStopTrack = nextStop ? trackForMetrolinkStop(vehicle, nextStop.name, metrolinkSchedule) : '';
       const upcomingStops = upcomingStopsForTrain(vehicle, metrolinkSchedule);
+      const destination = destinationFromUpcomingStops(vehicle, upcomingStops) || destinationForTrain(vehicle);
       const delayHtml = delayHtmlForTrain(vehicle);
       const upcomingStopList = upcomingStops.length
         ? '<div class="arrival-heading">Upcoming stops</div>' +
