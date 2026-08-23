@@ -480,7 +480,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.74';
+    const APP_VERSION = 'Beta 1.75';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -643,8 +643,27 @@
 
     const sharedMetroLineStyles = {
       'Metro A & E Line': ['#0072bc', '#e6a800'],
-      'Metro B & D Line': ['#e3131b', '#a05da5']
+      'Metro B & D Line': ['#e3131b', '#a05da5'],
+      'Metro C & K Line': ['#58a738', '#e8739b']
     };
+
+    const syntheticSharedMetroLineFeatures = [
+      {
+        type: 'Feature',
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [-118.378712612601, 33.9456620070204],
+            [-118.378679934528, 33.9488523654993],
+            [-118.378690766545, 33.9498699166184]
+          ]
+        },
+        properties: {
+          LABEL: 'Metro C & K Line',
+          STATUS: 'Existing'
+        }
+      }
+    ];
 
     function lineStringsForFeature(feature) {
       if (!feature?.geometry) return [];
@@ -672,7 +691,7 @@
 
       function draw() {
         layerGroup.clearLayers();
-        metroLines.features
+        metroLines.features.concat(syntheticSharedMetroLineFeatures)
           .filter((feature) => sharedMetroLineStyles[feature.properties.LABEL])
           .forEach(function (feature) {
             const colors = sharedMetroLineStyles[feature.properties.LABEL];
