@@ -107,6 +107,8 @@
     .arrival-track { color: #555; font-size: 12px; font-weight: 700; white-space: nowrap; }
     .delay-alert-list { margin: 3px 0 6px 20px; padding: 0; }
     .delay-alert-list li { margin: 2px 0; }
+    .station-alert-list { margin: 3px 0 8px 20px; padding: 0; }
+    .station-alert-list li { margin: 2px 0; }
     .scheduled-destination { margin-top: 9px; color: #20272d; font-weight: 700; }
     .scheduled-time-row,
     .upcoming-stop-row {
@@ -133,6 +135,11 @@
       background: #ffffff;
       border: 2px solid #777777;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
+
+    .station-symbol.alert-active {
+      background: #e52329;
+      border-color: #a70f16;
     }
 
     .station-symbol.circle {
@@ -361,7 +368,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.63';
+    const APP_VERSION = 'Beta 1.64';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -659,6 +666,7 @@
     });
     let metrolinkScheduleCache = [];
     let metrolinkScheduleFetchedAt = 0;
+    let metrolinkAlerts = [];
     const stationLayer = L.layerGroup().addTo(map);
     const stationEntries = [];
 
@@ -739,7 +747,7 @@
         .replace(/\s+[EK]-Line(?=\s+Station)/i, '');
     }
 
-    function stationIcon(shape) {
+    function stationIcon(shape, alertActive = false) {
       const size = shape === 'union'
         ? [44, 22]
         : shape === 'metro-center'
@@ -748,7 +756,7 @@
       const hitboxSize = [size[0] * 2, size[1] * 2];
       return L.divIcon({
         className: 'station-icon',
-        html: '<div class="station-hitbox" style="width:' + hitboxSize[0] + 'px;height:' + hitboxSize[1] + 'px"><div class="station-symbol ' + shape + '"></div></div>',
+        html: '<div class="station-hitbox" style="width:' + hitboxSize[0] + 'px;height:' + hitboxSize[1] + 'px"><div class="station-symbol ' + shape + (alertActive ? ' alert-active' : '') + '"></div></div>',
         iconSize: hitboxSize,
         iconAnchor: [hitboxSize[0] / 2, hitboxSize[1] / 2]
       });
@@ -772,7 +780,7 @@
         title: name
       })
         .addTo(stationLayer);
-      const stationEntry = { marker: stationMarker, cluster: cluster, name: name, services: services };
+      const stationEntry = { marker: stationMarker, cluster: cluster, name: name, services: services, shape: shape, alertActive: false };
       stationEntries.push(stationEntry);
       stationMarker.on('click', function () {
         openStationOrOverlap(stationEntry);
@@ -782,6 +790,127 @@
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, function (character) {
         return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character];
+      });
+    }
+
+    function normalizeTrainNumber(value) {
+      const match = String(value || '').match(/\d{2,5}/);
+      return match ? match[0] : '';
+    }
+
+    function normalizeMetrolinkRouteKey(value) {
+      let key = String(value || '').toLowerCase();
+      key = key.replace(/\bmetrolink\b/g, '');
+      key = key.replace(/\bamtrak\b/g, '');
+      key = key.replace(/\bline\b/g, '');
+      key = key.replace(/\bpacific\s+surfliner\b/g, 'pac surf');
+      key = key.replace(/\bantelope\s+valley\b/g, 'av');
+      key = key.replace(/\bsan\s+bernardino\b/g, 'sb');
+      key = key.replace(/\binland\s+emp(?:ire)?\.?\s*[-/]\s*orange\s+co(?:unty)?\.?\b/g, 'ieoc');
+      key = key.replace(/\bventura\s+county\b/g, 'vc');
+      key = key.replace(/\borange\s+county\b/g, 'oc');
+      key = key.replace(/\b91\s*\/\s*perris\s+valley\b/g, '91pv');
+      return key.replace(/[^a-z0-9]/g, '');
+    }
+
+    function metrolinkRouteKeysForCluster(cluster) {
+      const keys = new Set();
+      cluster.records.filter((record) => record.agency === 'Metrolink').forEach(function (record) {
+        if (record.lines) {
+          record.lines.split(',').map((line) => line.trim()).filter(Boolean)
+            .forEach((line) => keys.add(normalizeMetrolinkRouteKey(line)));
+        }
+        if (record.routeId) keys.add(normalizeMetrolinkRouteKey(record.routeId));
+      });
+      return keys;
+    }
+
+    function metrolinkStopIdsForCluster(cluster) {
+      const ids = new Set();
+      cluster.records.filter((record) => record.agency === 'Metrolink').forEach(function (record) {
+        if (record.id) ids.add(String(record.id));
+      });
+      return ids;
+    }
+
+    function alertHasRouteMatch(alert, routeKeys) {
+      return (alert.routeKeys || []).some((routeKey) => routeKeys.has(normalizeMetrolinkRouteKey(routeKey)));
+    }
+
+    function alertHasStopMatch(alert, stopIds) {
+      return (alert.stopIds || []).some((stopId) => stopIds.has(String(stopId)));
+    }
+
+    function alertMatchesTrainDesignation(alert, trainDesignation) {
+      const trainNumber = normalizeTrainNumber(trainDesignation);
+      return Boolean(trainNumber) && (alert.trainNumbers || []).some((number) => normalizeTrainNumber(number) === trainNumber);
+    }
+
+    function alertDisplayableAtStation(alert) {
+      if (alert.category === 'maintenance') return alert.activeNow || alert.maintenanceUpcoming;
+      return alert.activeNow !== false;
+    }
+
+    function uniqueAlerts(alerts) {
+      const seen = new Set();
+      return alerts.filter(function (alert) {
+        const key = String(alert.text || '').trim().toLowerCase();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function stationAlertsForCluster(cluster, arrivals = [], scheduledRows = []) {
+      const routeKeys = metrolinkRouteKeysForCluster(cluster);
+      const stopIds = metrolinkStopIdsForCluster(cluster);
+      const trainDesignations = [...arrivals, ...scheduledRows]
+        .map((arrival) => arrival.trainDesignation)
+        .filter(Boolean);
+
+      const matching = metrolinkAlerts.filter(function (alert) {
+        if (!alertDisplayableAtStation(alert)) return false;
+        if (alertHasStopMatch(alert, stopIds)) return true;
+        if ((alert.category === 'delay' || alert.category === 'maintenance') && alertHasRouteMatch(alert, routeKeys)) return true;
+        return trainDesignations.some((trainDesignation) => alertMatchesTrainDesignation(alert, trainDesignation));
+      });
+
+      return {
+        delay: uniqueAlerts(matching.filter((alert) => alert.category === 'delay')),
+        maintenance: uniqueAlerts(matching.filter((alert) => alert.category === 'maintenance')),
+        service: uniqueAlerts(matching.filter((alert) => alert.category === 'service'))
+      };
+    }
+
+    function stationAlertSection(label, alerts) {
+      if (!alerts.length) return '';
+      return '<div class="arrival-heading">' + escapeHtml(label) + '</div>' +
+        '<ul class="station-alert-list">' +
+        alerts.map((alert) => '<li>' + escapeHtml(alert.text) + '</li>').join('') +
+        '</ul>';
+    }
+
+    function stationAlertsHtml(alertGroups) {
+      return stationAlertSection('Delay', alertGroups.delay) +
+        stationAlertSection('Maintenance', alertGroups.maintenance) +
+        stationAlertSection('Service alert', alertGroups.service);
+    }
+
+    function stationHasActiveLineAlert(stationEntry) {
+      const routeKeys = metrolinkRouteKeysForCluster(stationEntry.cluster);
+      if (!routeKeys.size) return false;
+      return metrolinkAlerts.some(function (alert) {
+        if (!alert.activeNow || !alertHasRouteMatch(alert, routeKeys)) return false;
+        return alert.category === 'delay' || alert.category === 'maintenance';
+      });
+    }
+
+    function updateStationAlertMarkers() {
+      stationEntries.forEach(function (entry) {
+        const active = stationHasActiveLineAlert(entry);
+        if (entry.alertActive === active) return;
+        entry.alertActive = active;
+        entry.marker.setIcon(stationIcon(entry.shape, active));
       });
     }
 
@@ -1409,6 +1538,7 @@
         board += metrolinkArrivals.length
           ? metrolinkArrivals.map((arrival) => arrivalRow(arrival.line, arrival.destination, arrival.time, formatArrivalTime, arrival.track)).join('')
           : '<div class="arrival-note">' + escapeHtml(metrolinkError || 'No upcoming trains found.') + '</div>';
+        board += stationAlertsHtml(stationAlertsForCluster(cluster, metrolinkArrivals, metrolinkScheduledRows));
       }
       if (hasMetroRail || hasMetroBrt || hasMetrolink) {
         const scheduledMetro = stationSchedule.schedules?.metro || [];
@@ -1957,6 +2087,22 @@
           const tripId = String(tripUpdate.tripId || tripUpdate.id || '');
           if (tripId) metrolinkTripUpdatesByTripId.set(tripId, tripUpdate);
         });
+        metrolinkAlerts = (payload.alerts || []).map(function (alert) {
+          return {
+            id: alert.id || '',
+            text: alert.text || '',
+            category: alert.category || 'service',
+            activeNow: alert.activeNow !== false,
+            maintenanceUpcoming: Boolean(alert.maintenanceUpcoming),
+            delayRelated: Boolean(alert.delayRelated),
+            tripIds: Array.isArray(alert.tripIds) ? alert.tripIds : [],
+            routeKeys: Array.isArray(alert.routeKeys) ? alert.routeKeys : [],
+            stopIds: Array.isArray(alert.stopIds) ? alert.stopIds : [],
+            trainNumbers: Array.isArray(alert.trainNumbers) ? alert.trainNumbers : [],
+            activePeriods: Array.isArray(alert.activePeriods) ? alert.activePeriods : []
+          };
+        }).filter((alert) => alert.text);
+        updateStationAlertMarkers();
         vehicles = (payload.vehicles || []).map(function (vehicle) {
           const mappedVehicle = {
             agency: vehicle.agency || 'metrolink',

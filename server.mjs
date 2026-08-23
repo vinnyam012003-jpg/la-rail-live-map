@@ -211,6 +211,42 @@ function alertTextLooksDelayRelated(text) {
   return /\b(delay|delayed|late|hold|holding|cancel|canceled|cancelled|closure|closed|bus bridge|replacement bus|suspended|incident)\b/i.test(text);
 }
 
+function alertTextLooksMaintenanceRelated(text) {
+  return /\b(maintenance|scheduled|planned|construction|track work|work window|repair|repairs|upgrade|upgrades)\b/i.test(text);
+}
+
+function alertCategoryForText(text) {
+  if (alertTextLooksDelayRelated(text)) return 'delay';
+  if (alertTextLooksMaintenanceRelated(text)) return 'maintenance';
+  return 'service';
+}
+
+function activePeriodsFromAlert(alert) {
+  return (alert.activePeriod || []).map((period) => ({
+    start: numberFromGtfs(period.start),
+    end: numberFromGtfs(period.end)
+  }));
+}
+
+function alertIsActiveNow(alert, nowSeconds = Math.floor(Date.now() / 1000)) {
+  if (!alert.activePeriods.length) return true;
+  return alert.activePeriods.some((period) => {
+    const start = period.start ?? 0;
+    const end = period.end ?? Infinity;
+    return start <= nowSeconds && nowSeconds <= end;
+  });
+}
+
+function alertStartsWithinDays(alert, days, nowSeconds = Math.floor(Date.now() / 1000)) {
+  if (!alert.activePeriods.length) return alertIsActiveNow(alert, nowSeconds);
+  const horizon = nowSeconds + days * 24 * 60 * 60;
+  return alert.activePeriods.some((period) => {
+    const start = period.start ?? nowSeconds;
+    const end = period.end ?? Infinity;
+    return end >= nowSeconds && start <= horizon;
+  });
+}
+
 function vehicleLooksDelayed(vehicle) {
   const status = String(vehicle.delayStatus || '').trim();
   return Boolean(status) && !/on\s*time|early|normal|good/i.test(status);
@@ -237,12 +273,17 @@ async function fetchMetrolinkDelayAlerts() {
       const text = [header, description].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
       const tripIds = new Set();
       const routeKeys = new Set();
+      const stopIds = new Set();
       const trainNumbers = trainNumbersFromAlertText(text);
+      const activePeriods = activePeriodsFromAlert(alert);
+      const category = alertCategoryForText(text);
+      const activeNow = alertIsActiveNow({ activePeriods });
 
       (alert.informedEntity || []).forEach((informedEntity) => {
         if (informedEntity.trip?.tripId) tripIds.add(String(informedEntity.trip.tripId));
         if (informedEntity.trip?.routeId) routeKeys.add(normalizeMetrolinkRouteKey(informedEntity.trip.routeId));
         if (informedEntity.routeId) routeKeys.add(normalizeMetrolinkRouteKey(informedEntity.routeId));
+        if (informedEntity.stopId) stopIds.add(String(informedEntity.stopId));
       });
 
       return {
@@ -250,11 +291,32 @@ async function fetchMetrolinkDelayAlerts() {
         text,
         tripIds,
         routeKeys,
+        stopIds,
         trainNumbers,
-        delayRelated: alertTextLooksDelayRelated(text)
+        activePeriods,
+        activeNow,
+        category,
+        delayRelated: category === 'delay',
+        maintenanceUpcoming: category === 'maintenance' && alertStartsWithinDays({ activePeriods }, 7)
       };
     })
     .filter((alert) => alert.text);
+}
+
+function serializeAlert(alert) {
+  return {
+    id: alert.id,
+    text: alert.text,
+    category: alert.category,
+    activeNow: alert.activeNow,
+    maintenanceUpcoming: alert.maintenanceUpcoming,
+    delayRelated: alert.delayRelated,
+    tripIds: Array.from(alert.tripIds),
+    routeKeys: Array.from(alert.routeKeys),
+    stopIds: Array.from(alert.stopIds),
+    trainNumbers: Array.from(alert.trainNumbers),
+    activePeriods: alert.activePeriods
+  };
 }
 
 function alertMatchesVehicle(alert, vehicle) {
@@ -418,6 +480,7 @@ async function getCachedMetrolinkVehicles() {
         updatedAt: new Date().toISOString(),
         cacheSeconds: Math.round(metrolinkFeed.cacheMs / 1000),
         vehicles,
+        alerts: delayAlerts.map(serializeAlert),
         tripUpdates,
         source: officialVehicles.length ? 'api-key' : 'public-fallback',
         errors
