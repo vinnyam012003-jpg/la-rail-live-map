@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -68,6 +69,99 @@ const prebuiltScheduleCache = {
 const scheduleHorizonSeconds = 6 * 60 * 60;
 const metroRailServiceDayStartHour = 4;
 const scheduleTimeZone = 'America/Los_Angeles';
+const serverStartedAt = Date.now();
+const devStatusSessionToken = randomBytes(32).toString('hex');
+const telemetry = {
+  requests: [],
+  endpointCounts: new Map(),
+  appLogs: [],
+  viewers: new Map(),
+  viewerEvents: [],
+  metroApiCalls: [],
+  metrolinkLiveFetches: 0,
+  metrolinkCacheHits: 0,
+  feedStatus: new Map(),
+  vehicleCounts: { metro: 0, metrolink: 0, amtrak: 0 },
+  scheduleSources: new Map()
+};
+
+function appVersion() {
+  try {
+    const html = readFileSync(htmlPath, 'utf8');
+    return html.match(/APP_VERSION = '([^']+)'/)?.[1] || 'Unknown';
+  } catch {
+    return 'Unknown';
+  }
+}
+
+function addAppLog(type, message, details = {}) {
+  telemetry.appLogs.push({
+    time: new Date().toISOString(),
+    type,
+    message,
+    details
+  });
+  if (telemetry.appLogs.length > 250) telemetry.appLogs.splice(0, telemetry.appLogs.length - 250);
+}
+
+function endpointName(pathname) {
+  if (pathname === '/' || pathname === '/index.html') return 'map';
+  if (pathname.startsWith('/api/')) return pathname;
+  if (pathname === '/dev-status') return '/dev-status';
+  return pathname || 'unknown';
+}
+
+function pruneTelemetry() {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  telemetry.requests = telemetry.requests.filter((entry) => entry.time >= cutoff);
+  telemetry.viewerEvents = telemetry.viewerEvents.filter((entry) => entry.time >= cutoff);
+  telemetry.metroApiCalls = telemetry.metroApiCalls.filter((entry) => entry.time >= Date.now() - 15 * 60 * 1000);
+  for (const [viewerId, viewer] of telemetry.viewers.entries()) {
+    if (viewer.lastSeen < cutoff) telemetry.viewers.delete(viewerId);
+  }
+}
+
+function parseCookies(cookieHeader = '') {
+  const cookies = new Map();
+  cookieHeader.split(';').forEach((part) => {
+    const separator = part.indexOf('=');
+    if (separator < 0) return;
+    const key = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (key) cookies.set(key, decodeURIComponent(value));
+  });
+  return cookies;
+}
+
+function appendSetCookie(response, cookie) {
+  const current = response.getHeader('Set-Cookie');
+  if (!current) {
+    response.setHeader('Set-Cookie', cookie);
+    return;
+  }
+  response.setHeader('Set-Cookie', Array.isArray(current) ? [...current, cookie] : [current, cookie]);
+}
+
+function recordRequest(request, response, url) {
+  pruneTelemetry();
+  const endpoint = endpointName(url.pathname);
+  const now = Date.now();
+  telemetry.requests.push({ time: now, endpoint, method: request.method || 'GET' });
+  telemetry.endpointCounts.set(endpoint, (telemetry.endpointCounts.get(endpoint) || 0) + 1);
+
+  if (endpoint === '/dev-status' || endpoint.startsWith('/favicon') || endpoint.startsWith('/icon-')) return;
+
+  const cookies = parseCookies(request.headers.cookie || '');
+  let viewerId = cookies.get('larail_viewer');
+  if (!viewerId || !/^[a-f0-9]{32}$/.test(viewerId)) {
+    viewerId = randomBytes(16).toString('hex');
+    appendSetCookie(response, `larail_viewer=${viewerId}; Path=/; Max-Age=31536000; SameSite=Lax`);
+  }
+  const viewer = telemetry.viewers.get(viewerId) || { firstSeen: now, lastSeen: now };
+  viewer.lastSeen = now;
+  telemetry.viewers.set(viewerId, viewer);
+  telemetry.viewerEvents.push({ time: now, viewerId });
+}
 
 function loadLocalEnv(path) {
   if (!existsSync(path)) return;
@@ -417,10 +511,12 @@ async function getCachedMetrolinkVehicles() {
   const now = Date.now();
 
   if (metrolinkCache.value && now - metrolinkCache.fetchedAt < metrolinkFeed.cacheMs) {
+    telemetry.metrolinkCacheHits += 1;
     return { ...metrolinkCache.value, cacheAgeMs: now - metrolinkCache.fetchedAt };
   }
 
   if (!metrolinkCache.pending) {
+    telemetry.metrolinkLiveFetches += 1;
     metrolinkCache.pending = Promise.allSettled([
       fetchMetrolinkVehicles(),
       fetchPublicMetrolinkAndAmtrakVehicles(),
@@ -443,6 +539,10 @@ async function getCachedMetrolinkVehicles() {
       if (publicResult.status === 'rejected') errors.public = publicResult.reason.message;
       if (tripUpdatesResult.status === 'rejected') errors.metrolinkTripUpdates = tripUpdatesResult.reason.message;
       if (alertsResult.status === 'rejected') errors.metrolinkAlerts = alertsResult.reason.message;
+      Object.entries(errors).forEach(([feed, message]) => {
+        telemetry.feedStatus.set(feed, { lastErrorAt: new Date().toISOString(), lastError: message });
+        addAppLog('feed-error', `${feed}: ${message}`);
+      });
 
       const publicMetrolinkVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'metrolink');
       const publicDelayByTrain = new Map();
@@ -486,6 +586,13 @@ async function getCachedMetrolinkVehicles() {
         source: officialVehicles.length ? 'api-key' : 'public-fallback',
         errors
       };
+      telemetry.feedStatus.set('metrolinkVehicles', {
+        lastSuccessAt: value.updatedAt,
+        lastErrorAt: errors.metrolink ? new Date().toISOString() : telemetry.feedStatus.get('metrolinkVehicles')?.lastErrorAt || null,
+        lastError: errors.metrolink || telemetry.feedStatus.get('metrolinkVehicles')?.lastError || ''
+      });
+      telemetry.vehicleCounts.metrolink = vehicles.filter((vehicle) => vehicle.agency === 'metrolink').length;
+      telemetry.vehicleCounts.amtrak = vehicles.filter((vehicle) => vehicle.agency === 'amtrak').length;
       metrolinkCache.value = value;
       metrolinkCache.fetchedAt = Date.now();
       return value;
@@ -521,6 +628,7 @@ async function fetchMetroGtfsRealtime(feedType) {
   }
 
   const results = await Promise.allSettled(feed.urls.map(async (feedUrl) => {
+    telemetry.metroApiCalls.push({ time: Date.now(), feedType, url: feedUrl });
     const response = await fetch(feedUrl, {
       headers: { authorization: apiKey },
       signal: AbortSignal.timeout(12000)
@@ -565,6 +673,11 @@ async function getCachedMetroFeed(feedType, parser) {
           errors: result.errors.length ? { metroPartial: result.errors.join('; ') } : {},
           ...parser(result.messages)
         };
+        telemetry.feedStatus.set(`metro-${feedType}`, {
+          lastSuccessAt: value.updatedAt,
+          lastErrorAt: result.errors.length ? new Date().toISOString() : telemetry.feedStatus.get(`metro-${feedType}`)?.lastErrorAt || null,
+          lastError: result.errors.join('; ') || telemetry.feedStatus.get(`metro-${feedType}`)?.lastError || ''
+        });
         cache.value = value;
         cache.fetchedAt = Date.now();
         return value;
@@ -579,8 +692,7 @@ async function getCachedMetroFeed(feedType, parser) {
 }
 
 function parseMetroVehicles(messages) {
-  return {
-    vehicles: messages.flatMap((message) => message.entity)
+  const vehicles = messages.flatMap((message) => message.entity)
       .filter((entity) => entity.vehicle?.position)
       .map((entity) => {
         const vehicle = entity.vehicle;
@@ -600,8 +712,9 @@ function parseMetroVehicles(messages) {
           speed: vehicle.position.speed ?? null,
           timestamp: numberFromGtfs(vehicle.timestamp)
         };
-      })
-  };
+      });
+  telemetry.vehicleCounts.metro = vehicles.length;
+  return { vehicles };
 }
 
 function parseMetroTripUpdates(messages) {
@@ -1207,8 +1320,11 @@ async function sendStationSchedule(requestUrl, response) {
         serviceDayStartHour: metroRailServiceDayStartHour,
         maxRows: 500
       });
+      telemetry.scheduleSources.set('metroRail', { source: 'static GTFS', lastSuccessAt: new Date().toISOString(), rows: metro.length });
     } catch (error) {
       errors.metro = error.message;
+      telemetry.scheduleSources.set('metroRail', { source: 'static GTFS', lastErrorAt: new Date().toISOString(), lastError: error.message });
+      addAppLog('schedule-error', `Metro rail schedule: ${error.message}`);
     }
   }
 
@@ -1221,8 +1337,11 @@ async function sendStationSchedule(requestUrl, response) {
         serviceDayStartHour: 0,
         maxRows: 500
       });
+      telemetry.scheduleSources.set('metroBrt', { source: 'prebuilt static GTFS', lastSuccessAt: new Date().toISOString(), rows: metroBrt.length });
     } catch (error) {
       errors.metroBrt = error.message;
+      telemetry.scheduleSources.set('metroBrt', { source: 'prebuilt static GTFS', lastErrorAt: new Date().toISOString(), lastError: error.message });
+      addAppLog('schedule-error', `Metro G/J schedule: ${error.message}`);
     }
   }
 
@@ -1234,8 +1353,11 @@ async function sendStationSchedule(requestUrl, response) {
         serviceDayStartHour: 0,
         maxRows: 500
       });
+      telemetry.scheduleSources.set('metrolink', { source: 'static GTFS', lastSuccessAt: new Date().toISOString(), rows: metrolink.length });
     } catch (error) {
       errors.metrolink = error.message;
+      telemetry.scheduleSources.set('metrolink', { source: 'static GTFS', lastErrorAt: new Date().toISOString(), lastError: error.message });
+      addAppLog('schedule-error', `Metrolink schedule: ${error.message}`);
     }
   }
 
@@ -1265,6 +1387,12 @@ async function sendMetroVehicles(response) {
     const payload = await getCachedMetroFeed('vehicles', parseMetroVehicles);
     sendJson(response, 200, payload);
   } catch (error) {
+    telemetry.feedStatus.set('metro-vehicles', {
+      lastSuccessAt: telemetry.feedStatus.get('metro-vehicles')?.lastSuccessAt || null,
+      lastErrorAt: new Date().toISOString(),
+      lastError: error.message
+    });
+    addAppLog('feed-error', `metro vehicles: ${error.message}`);
     sendJson(response, 503, {
       updatedAt: new Date().toISOString(),
       vehicles: [],
@@ -1278,12 +1406,323 @@ async function sendMetroTripUpdates(response) {
     const payload = await getCachedMetroFeed('tripUpdates', parseMetroTripUpdates);
     sendJson(response, 200, payload);
   } catch (error) {
+    telemetry.feedStatus.set('metro-tripUpdates', {
+      lastSuccessAt: telemetry.feedStatus.get('metro-tripUpdates')?.lastSuccessAt || null,
+      lastErrorAt: new Date().toISOString(),
+      lastError: error.message
+    });
+    addAppLog('feed-error', `metro trip updates: ${error.message}`);
     sendJson(response, 503, {
       updatedAt: new Date().toISOString(),
       updates: [],
       errors: { metro: error.message }
     });
   }
+}
+
+function htmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function readRequestBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    request.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 20000) {
+        reject(new Error('Request body too large'));
+        request.destroy();
+      }
+    });
+    request.on('end', () => resolve(body));
+    request.on('error', reject);
+  });
+}
+
+function safeCompare(first, second) {
+  const firstBuffer = Buffer.from(String(first || ''));
+  const secondBuffer = Buffer.from(String(second || ''));
+  if (firstBuffer.length !== secondBuffer.length) return false;
+  return timingSafeEqual(firstBuffer, secondBuffer);
+}
+
+function isDevStatusAuthenticated(request) {
+  const cookies = parseCookies(request.headers.cookie || '');
+  return safeCompare(cookies.get('dev_status_session'), devStatusSessionToken);
+}
+
+function sendHtml(response, status, html) {
+  response.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store'
+  });
+  response.end(html);
+}
+
+function sendDevStatusLogin(response, message = '') {
+  sendHtml(response, 200, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LA Rail Dev Status</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111820; color: #ecf2f7; font-family: Arial, sans-serif; }
+    form { width: min(420px, calc(100vw - 32px)); background: #202933; border: 1px solid #384653; border-radius: 22px; padding: 28px; box-shadow: 0 18px 55px rgba(0,0,0,.35); }
+    h1 { margin: 0 0 10px; font-size: 28px; }
+    p { color: #aebbc7; line-height: 1.4; }
+    input, button { box-sizing: border-box; width: 100%; border-radius: 12px; border: 1px solid #526271; padding: 13px 14px; font-size: 16px; }
+    input { background: #121920; color: #fff; margin: 12px 0; }
+    button { background: #0b7f8f; color: white; font-weight: 800; cursor: pointer; }
+    .error { color: #ffb4b4; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <form method="post" action="/dev-status">
+    <h1>Private dev status</h1>
+    <p>Enter the dev password to view server telemetry.</p>
+    ${message ? `<p class="error">${htmlEscape(message)}</p>` : ''}
+    <input name="password" type="password" autocomplete="current-password" autofocus>
+    <button type="submit">Unlock</button>
+  </form>
+</body>
+</html>`);
+}
+
+function formatDuration(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days}d ${hours}h ${minutes}m`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+function relativeAge(time) {
+  if (!time) return 'never';
+  const timestamp = typeof time === 'number' ? time : Date.parse(time);
+  if (!Number.isFinite(timestamp)) return 'unknown';
+  return `${formatDuration(Date.now() - timestamp)} ago`;
+}
+
+function uniqueViewerCountSince(ms) {
+  const cutoff = Date.now() - ms;
+  return new Set(telemetry.viewerEvents.filter((entry) => entry.time >= cutoff).map((entry) => entry.viewerId)).size;
+}
+
+function viewerHistoryByHour() {
+  const now = new Date();
+  const rows = [];
+  for (let index = 23; index >= 0; index -= 1) {
+    const end = new Date(now.getTime() - index * 60 * 60 * 1000);
+    end.setMinutes(0, 0, 0);
+    const startMs = end.getTime();
+    const endMs = startMs + 60 * 60 * 1000;
+    const viewers = new Set(telemetry.viewerEvents
+      .filter((entry) => entry.time >= startMs && entry.time < endMs)
+      .map((entry) => entry.viewerId));
+    rows.push({
+      label: end.toLocaleTimeString('en-US', { hour: 'numeric', timeZone: scheduleTimeZone }),
+      viewers: viewers.size
+    });
+  }
+  return rows;
+}
+
+function cacheAgeFor(cache) {
+  if (!cache?.fetchedAt && !cache?.loadedAt) return 'not loaded';
+  return relativeAge(cache.fetchedAt || cache.loadedAt);
+}
+
+function telemetrySnapshot() {
+  pruneTelemetry();
+  const memory = process.memoryUsage();
+  const cpu = process.cpuUsage();
+  const activeCutoff = Date.now() - 2 * 60 * 1000;
+  const recentRequests = telemetry.requests.filter((entry) => entry.time >= Date.now() - 15 * 60 * 1000);
+  const endpointRows = Array.from(telemetry.endpointCounts.entries())
+    .sort((first, second) => second[1] - first[1])
+    .slice(0, 12);
+  return {
+    version: appVersion(),
+    uptime: formatDuration(Date.now() - serverStartedAt),
+    startedAt: new Date(serverStartedAt).toLocaleString('en-US', { timeZone: scheduleTimeZone }),
+    memoryMb: {
+      rss: Math.round(memory.rss / 1024 / 1024),
+      heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(memory.heapTotal / 1024 / 1024)
+    },
+    cpuSeconds: Math.round((cpu.user + cpu.system) / 1000000),
+    activeViewers: Array.from(telemetry.viewers.values()).filter((viewer) => viewer.lastSeen >= activeCutoff).length,
+    uniqueViewers15m: uniqueViewerCountSince(15 * 60 * 1000),
+    uniqueViewers1h: uniqueViewerCountSince(60 * 60 * 1000),
+    uniqueViewers24h: uniqueViewerCountSince(24 * 60 * 60 * 1000),
+    pageLoads24h: telemetry.requests.filter((entry) => entry.endpoint === 'map').length,
+    viewerHistory: viewerHistoryByHour(),
+    recentRequests: recentRequests.length,
+    endpointRows,
+    metroApiCalls15m: telemetry.metroApiCalls.length,
+    metrolinkLiveFetches: telemetry.metrolinkLiveFetches,
+    metrolinkCacheHits: telemetry.metrolinkCacheHits,
+    vehicleCounts: telemetry.vehicleCounts,
+    feedStatus: Array.from(telemetry.feedStatus.entries()),
+    scheduleSources: Array.from(telemetry.scheduleSources.entries()),
+    cacheAges: [
+      ['Metro vehicles', cacheAgeFor(metroCache.vehicles)],
+      ['Metro trip updates', cacheAgeFor(metroCache.tripUpdates)],
+      ['Metrolink vehicles', cacheAgeFor(metrolinkCache)],
+      ['Metro rail GTFS', cacheAgeFor(staticScheduleCache.metro)],
+      ['Metrolink GTFS', cacheAgeFor(staticScheduleCache.metrolink)],
+      ['Metro G/J schedule', cacheAgeFor(prebuiltScheduleCache.metroGj)]
+    ],
+    logs: telemetry.appLogs.slice(-40).reverse()
+  };
+}
+
+function sendDevStatusPage(response) {
+  const data = telemetrySnapshot();
+  const maxViewerCount = Math.max(1, ...data.viewerHistory.map((row) => row.viewers));
+  sendHtml(response, 200, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="30">
+  <title>LA Rail Dev Status</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #111820; color: #eef4f8; font-family: Arial, sans-serif; }
+    main { width: min(1200px, calc(100vw - 28px)); margin: 22px auto 48px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: clamp(28px, 5vw, 44px); }
+    h2 { margin: 0 0 12px; font-size: 22px; }
+    a, button { color: #8ee9f5; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr)); gap: 14px; }
+    .card { background: #202933; border: 1px solid #384653; border-radius: 18px; padding: 18px; box-shadow: 0 10px 28px rgba(0,0,0,.22); }
+    .big { font-size: 32px; font-weight: 900; margin: 4px 0; }
+    .muted { color: #aebbc7; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #384653; padding: 9px 6px; vertical-align: top; }
+    th { color: #aebbc7; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+    .bar-row { display: grid; grid-template-columns: 64px 1fr 42px; gap: 10px; align-items: center; margin: 8px 0; }
+    .bar { height: 14px; background: #121920; border-radius: 999px; overflow: hidden; }
+    .bar span { display: block; height: 100%; background: #0b7f8f; }
+    .pill { display: inline-block; border-radius: 999px; padding: 4px 9px; background: #34414d; color: #dce8ef; font-size: 13px; }
+    .danger { color: #ffb4b4; }
+    .logout { border: 1px solid #526271; border-radius: 999px; padding: 10px 14px; text-decoration: none; background: #202933; }
+    pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>LA Rail dev status</h1>
+      <div class="muted">Private telemetry · auto-refreshes every 30 seconds</div>
+    </div>
+    <a class="logout" href="/dev-status?logout=1">Logout</a>
+  </header>
+
+  <section class="grid">
+    <div class="card"><div class="muted">Version</div><div class="big">${htmlEscape(data.version)}</div></div>
+    <div class="card"><div class="muted">Uptime</div><div class="big">${htmlEscape(data.uptime)}</div><div class="muted">Started ${htmlEscape(data.startedAt)}</div></div>
+    <div class="card"><div class="muted">Memory</div><div class="big">${data.memoryMb.rss} MB</div><div class="muted">Heap ${data.memoryMb.heapUsed}/${data.memoryMb.heapTotal} MB</div></div>
+    <div class="card"><div class="muted">CPU used by process</div><div class="big">${data.cpuSeconds}s</div><div class="muted">Render has the better CPU graph</div></div>
+    <div class="card"><div class="muted">Active viewers</div><div class="big">${data.activeViewers}</div><div class="muted">Approx. active in last 2 min</div></div>
+    <div class="card"><div class="muted">Unique viewers</div><div class="big">${data.uniqueViewers24h}</div><div class="muted">15m: ${data.uniqueViewers15m} · 1h: ${data.uniqueViewers1h} · 24h: ${data.uniqueViewers24h}</div></div>
+    <div class="card"><div class="muted">Metro API calls</div><div class="big">${data.metroApiCalls15m}</div><div class="muted">Last 15 minutes</div></div>
+    <div class="card"><div class="muted">Metrolink feed</div><div class="big">${data.metrolinkLiveFetches}</div><div class="muted">Live fetches · ${data.metrolinkCacheHits} cache hits</div></div>
+  </section>
+
+  <section class="grid" style="margin-top:14px;">
+    <div class="card">
+      <h2>Vehicles parsed</h2>
+      <table><tr><th>Agency</th><th>Count</th></tr>
+        ${Object.entries(data.vehicleCounts).map(([agency, count]) => `<tr><td>${htmlEscape(agency)}</td><td>${count}</td></tr>`).join('')}
+      </table>
+    </div>
+    <div class="card">
+      <h2>Cache age</h2>
+      <table><tr><th>Feed</th><th>Age</th></tr>
+        ${data.cacheAges.map(([name, age]) => `<tr><td>${htmlEscape(name)}</td><td>${htmlEscape(age)}</td></tr>`).join('')}
+      </table>
+    </div>
+    <div class="card">
+      <h2>Request endpoints</h2>
+      <table><tr><th>Endpoint</th><th>Total</th></tr>
+        ${data.endpointRows.map(([endpoint, count]) => `<tr><td>${htmlEscape(endpoint)}</td><td>${count}</td></tr>`).join('')}
+      </table>
+      <p class="muted">${data.recentRequests} requests in the last 15 minutes</p>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:14px;">
+    <h2>24-hour viewer history</h2>
+    ${data.viewerHistory.map((row) => `<div class="bar-row"><span class="muted">${htmlEscape(row.label)}</span><div class="bar"><span style="width:${Math.round((row.viewers / maxViewerCount) * 100)}%"></span></div><strong>${row.viewers}</strong></div>`).join('')}
+  </section>
+
+  <section class="grid" style="margin-top:14px;">
+    <div class="card">
+      <h2>Feed status</h2>
+      <table><tr><th>Feed</th><th>Last success</th><th>Last error</th></tr>
+        ${data.feedStatus.map(([feed, status]) => `<tr><td>${htmlEscape(feed)}</td><td>${htmlEscape(relativeAge(status.lastSuccessAt))}</td><td class="${status.lastError ? 'danger' : ''}">${htmlEscape(status.lastError || 'none')}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">No feed activity yet.</td></tr>'}
+      </table>
+    </div>
+    <div class="card">
+      <h2>Schedule sources</h2>
+      <table><tr><th>Schedule</th><th>Source</th><th>Status</th></tr>
+        ${data.scheduleSources.map(([schedule, status]) => `<tr><td>${htmlEscape(schedule)}</td><td>${htmlEscape(status.source)}</td><td>${htmlEscape(status.lastError || `${status.rows ?? 0} rows · ${relativeAge(status.lastSuccessAt)}`)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">No station schedules requested yet.</td></tr>'}
+      </table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:14px;">
+    <h2>Recent app logs</h2>
+    ${data.logs.length ? data.logs.map((log) => `<p><span class="pill">${htmlEscape(log.type)}</span> <span class="muted">${htmlEscape(new Date(log.time).toLocaleTimeString('en-US', { timeZone: scheduleTimeZone }))}</span> ${htmlEscape(log.message)}</p>`).join('') : '<p class="muted">No recent app log entries.</p>'}
+  </section>
+</main>
+</body>
+</html>`);
+}
+
+async function handleDevStatus(request, response, url) {
+  const configuredPassword = (process.env.DEV_STATUS_PASSWORD || '').trim();
+  if (!configuredPassword) {
+    sendHtml(response, 503, '<!DOCTYPE html><h1>Dev status is not configured</h1><p>Set DEV_STATUS_PASSWORD in Render Environment Variables.</p>');
+    return;
+  }
+
+  if (url.searchParams.get('logout') === '1') {
+    appendSetCookie(response, 'dev_status_session=; Path=/dev-status; Max-Age=0; HttpOnly; SameSite=Lax');
+    sendDevStatusLogin(response, 'Logged out.');
+    return;
+  }
+
+  if (request.method === 'POST') {
+    const body = await readRequestBody(request);
+    const form = new URLSearchParams(body);
+    if (safeCompare(form.get('password') || '', configuredPassword)) {
+      appendSetCookie(response, `dev_status_session=${devStatusSessionToken}; Path=/dev-status; HttpOnly; SameSite=Lax`);
+      response.writeHead(303, { Location: '/dev-status' });
+      response.end();
+      return;
+    }
+    sendDevStatusLogin(response, 'Incorrect password.');
+    return;
+  }
+
+  if (!isDevStatusAuthenticated(request)) {
+    sendDevStatusLogin(response);
+    return;
+  }
+
+  sendDevStatusPage(response);
 }
 
 function sendJson(response, status, value) {
@@ -1297,6 +1736,12 @@ function sendJson(response, status, value) {
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    recordRequest(request, response, url);
+
+    if (url.pathname === '/dev-status') {
+      await handleDevStatus(request, response, url);
+      return;
+    }
 
     if (url.pathname === '/api/vehicles') {
       await sendVehicles(response);
@@ -1357,5 +1802,6 @@ const server = http.createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+  addAppLog('server-start', `Server started on ${displayHost}:${port}`);
   console.log(`LA Rail live map: http://${displayHost}:${port}`);
 });
