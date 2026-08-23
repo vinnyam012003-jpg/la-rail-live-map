@@ -42,6 +42,13 @@
       gap: 8px;
     }
 
+    .map-mode-button-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .map-mode-button,
     .developer-info-button {
       display: grid;
       width: 34px;
@@ -53,6 +60,7 @@
       cursor: pointer;
     }
 
+    .map-mode-button svg,
     .developer-info-button svg {
       display: block;
       width: 34px;
@@ -71,6 +79,29 @@
       background: rgba(255, 255, 255, 0.92);
       box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
       font: 13px/1.4 Arial, sans-serif;
+    }
+
+    body.dark-mode .map-title,
+    body.dark-mode .live-status,
+    body.dark-mode .version-badge {
+      background: rgba(32, 39, 45, 0.92);
+      color: #f4f6f8;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    body.dark-mode .leaflet-control-zoom a {
+      background: rgba(32, 39, 45, 0.94);
+      color: #f4f6f8;
+      border-bottom-color: rgba(255, 255, 255, 0.18);
+    }
+
+    body.dark-mode .leaflet-control-attribution {
+      background: rgba(32, 39, 45, 0.84);
+      color: #d9dee3;
+    }
+
+    body.dark-mode .leaflet-control-attribution a {
+      color: #f4f6f8;
     }
 
     .train-marker {
@@ -396,7 +427,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.71';
+    const APP_VERSION = 'Beta 1.72';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -466,10 +497,27 @@
       else mapSheet.style.transform = '';
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    const lightTileUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+    const darkTileUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    const tileLayerOptions = {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-    }).addTo(map);
+    };
+    let baseTileLayer = L.tileLayer(lightTileUrl, tileLayerOptions).addTo(map);
+
+    function setDarkMode(enabled) {
+      document.body.classList.toggle('dark-mode', enabled);
+      localStorage.setItem('mapDarkMode', String(enabled));
+      const nextUrl = enabled ? darkTileUrl : lightTileUrl;
+      if (baseTileLayer._url !== nextUrl) {
+        map.removeLayer(baseTileLayer);
+        baseTileLayer = L.tileLayer(nextUrl, tileLayerOptions).addTo(map);
+      }
+      if (statusControl.buttonDarkMode) {
+        statusControl.buttonDarkMode.setAttribute('aria-label', enabled ? 'Switch to light mode' : 'Switch to dark mode');
+        statusControl.buttonDarkMode.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      }
+    }
 
     const titleControl = L.control({ position: 'topright' });
     titleControl.onAdd = function () {
@@ -1685,7 +1733,18 @@
     const statusControl = L.control({ position: 'bottomleft' });
     statusControl.onAdd = function () {
       this.container = L.DomUtil.create('div', 'developer-info-control');
-      this.button = L.DomUtil.create('button', 'developer-info-button', this.container);
+      this.buttonStack = L.DomUtil.create('div', 'map-mode-button-stack', this.container);
+      this.buttonDarkMode = L.DomUtil.create('button', 'map-mode-button dark-mode-button', this.buttonStack);
+      this.buttonDarkMode.type = 'button';
+      this.buttonDarkMode.setAttribute('aria-label', 'Switch to dark mode');
+      this.buttonDarkMode.setAttribute('aria-pressed', 'false');
+      this.buttonDarkMode.innerHTML =
+        '<svg viewBox="-40 -40 80 80" aria-hidden="true" focusable="false">' +
+          '<circle cx="0" cy="0" r="34" fill="#303841"/>' +
+          '<path d="M0 -26.4 A26.4 26.4 0 0 1 0 26.4 Z" fill="#f8f9fa"/>' +
+          '<path d="M0 -26.4 A26.4 26.4 0 0 0 0 26.4 Z" fill="#8c959e"/>' +
+        '</svg>';
+      this.button = L.DomUtil.create('button', 'developer-info-button', this.buttonStack);
       this.button.type = 'button';
       this.button.setAttribute('aria-label', 'Hide developer info');
       this.button.setAttribute('aria-pressed', 'false');
@@ -1707,6 +1766,10 @@
       this.button.setAttribute('aria-label', collapsed ? 'Show developer info' : 'Hide developer info');
       this.button.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
       L.DomEvent.disableClickPropagation(this.container);
+      L.DomEvent.on(this.buttonDarkMode, 'click', function () {
+        const nextDarkMode = !document.body.classList.contains('dark-mode');
+        setDarkMode(nextDarkMode);
+      });
       L.DomEvent.on(this.button, 'click', function () {
         const nextCollapsed = !statusControl.container.classList.contains('collapsed');
         statusControl.container.classList.toggle('collapsed', nextCollapsed);
@@ -1714,6 +1777,7 @@
         statusControl.button.setAttribute('aria-pressed', nextCollapsed ? 'true' : 'false');
         localStorage.setItem('developerInfoCollapsed', String(nextCollapsed));
       });
+      setDarkMode(localStorage.getItem('mapDarkMode') === 'true');
       return this.container;
     };
     statusControl.addTo(map);
