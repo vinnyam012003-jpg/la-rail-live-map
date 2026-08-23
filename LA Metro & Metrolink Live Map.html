@@ -36,16 +36,14 @@
       font: 700 12px/1.2 Arial, sans-serif;
     }
 
-    .developer-info-control {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
-    }
-
     .map-mode-button-stack {
       display: flex;
       flex-direction: column;
       gap: 7px;
+    }
+
+    .map-mode-control {
+      margin-top: 8px;
     }
 
     .map-mode-button,
@@ -68,7 +66,7 @@
       filter: drop-shadow(0 1px 5px rgba(0, 0, 0, 0.3));
     }
 
-    .developer-info-control.collapsed .live-status {
+    .live-status.collapsed {
       display: none;
     }
 
@@ -427,7 +425,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.72';
+    const APP_VERSION = 'Beta 1.73';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -499,24 +497,60 @@
 
     const lightTileUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
     const darkTileUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    const satelliteTileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+    const satelliteLabelUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
     const tileLayerOptions = {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
     };
+    const satelliteTileLayerOptions = {
+      maxZoom: 19,
+      attribution: 'Tiles &copy; Esri'
+    };
+    const satelliteLabelLayerOptions = {
+      maxZoom: 19,
+      attribution: 'Labels &copy; Esri'
+    };
+    let darkModeButton = null;
+    let satelliteButton = null;
+    let satelliteMode = localStorage.getItem('mapSatelliteMode') === 'true';
     let baseTileLayer = L.tileLayer(lightTileUrl, tileLayerOptions).addTo(map);
+    let satelliteLabelLayer = null;
+
+    function refreshBaseMap() {
+      const darkModeEnabled = localStorage.getItem('mapDarkMode') === 'true';
+      const nextUrl = satelliteMode ? satelliteTileUrl : darkModeEnabled ? darkTileUrl : lightTileUrl;
+      const nextOptions = satelliteMode ? satelliteTileLayerOptions : tileLayerOptions;
+      if (baseTileLayer._url !== nextUrl) {
+        map.removeLayer(baseTileLayer);
+        baseTileLayer = L.tileLayer(nextUrl, nextOptions).addTo(map);
+      }
+      if (satelliteMode && !satelliteLabelLayer) {
+        satelliteLabelLayer = L.tileLayer(satelliteLabelUrl, satelliteLabelLayerOptions).addTo(map);
+      } else if (!satelliteMode && satelliteLabelLayer) {
+        map.removeLayer(satelliteLabelLayer);
+        satelliteLabelLayer = null;
+      }
+      if (satelliteButton) {
+        satelliteButton.setAttribute('aria-label', satelliteMode ? 'Switch to street map' : 'Switch to satellite view');
+        satelliteButton.setAttribute('aria-pressed', satelliteMode ? 'true' : 'false');
+      }
+    }
 
     function setDarkMode(enabled) {
       document.body.classList.toggle('dark-mode', enabled);
       localStorage.setItem('mapDarkMode', String(enabled));
-      const nextUrl = enabled ? darkTileUrl : lightTileUrl;
-      if (baseTileLayer._url !== nextUrl) {
-        map.removeLayer(baseTileLayer);
-        baseTileLayer = L.tileLayer(nextUrl, tileLayerOptions).addTo(map);
+      refreshBaseMap();
+      if (darkModeButton) {
+        darkModeButton.setAttribute('aria-label', enabled ? 'Switch to light mode' : 'Switch to dark mode');
+        darkModeButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
       }
-      if (statusControl.buttonDarkMode) {
-        statusControl.buttonDarkMode.setAttribute('aria-label', enabled ? 'Switch to light mode' : 'Switch to dark mode');
-        statusControl.buttonDarkMode.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-      }
+    }
+
+    function setSatelliteMode(enabled) {
+      satelliteMode = Boolean(enabled);
+      localStorage.setItem('mapSatelliteMode', String(satelliteMode));
+      refreshBaseMap();
     }
 
     const titleControl = L.control({ position: 'topright' });
@@ -1732,8 +1766,31 @@
 
     const statusControl = L.control({ position: 'bottomleft' });
     statusControl.onAdd = function () {
-      this.container = L.DomUtil.create('div', 'developer-info-control');
-      this.buttonStack = L.DomUtil.create('div', 'map-mode-button-stack', this.container);
+      this.element = L.DomUtil.create('div', 'live-status');
+      this.element.textContent = 'Live vehicles: connecting...';
+      this.element.classList.toggle('collapsed', localStorage.getItem('developerInfoCollapsed') === 'true');
+      return this.element;
+    };
+    statusControl.addTo(map);
+
+    const modeControl = L.control({ position: 'topleft' });
+    modeControl.onAdd = function () {
+      this.buttonStack = L.DomUtil.create('div', 'map-mode-button-stack map-mode-control');
+      this.buttonSatellite = L.DomUtil.create('button', 'map-mode-button satellite-mode-button', this.buttonStack);
+      this.buttonSatellite.type = 'button';
+      this.buttonSatellite.setAttribute('aria-label', 'Switch to satellite view');
+      this.buttonSatellite.setAttribute('aria-pressed', 'false');
+      this.buttonSatellite.innerHTML =
+        '<svg viewBox="-40 -40 80 80" aria-hidden="true" focusable="false">' +
+          '<circle cx="0" cy="0" r="34" fill="#303841"/>' +
+          '<g transform="rotate(-28)" stroke-linejoin="round" stroke-linecap="round">' +
+            '<rect x="-8.4" y="-11.2" width="16.8" height="22.4" rx="4" fill="#f8f9fa"/>' +
+            '<rect x="-28" y="-9.2" width="15" height="18.4" rx="2.2" fill="#aeb5bc"/>' +
+            '<rect x="13" y="-9.2" width="15" height="18.4" rx="2.2" fill="#aeb5bc"/>' +
+            '<path d="M-12.8 0 H-8.4 M8.4 0 H12.8" stroke="#8c959e" stroke-width="3.6"/>' +
+          '</g>' +
+          '<path d="M10 16 C16 20 20.8 24 24 28" fill="none" stroke="#8c959e" stroke-width="4" stroke-linecap="round"/>' +
+        '</svg>';
       this.buttonDarkMode = L.DomUtil.create('button', 'map-mode-button dark-mode-button', this.buttonStack);
       this.buttonDarkMode.type = 'button';
       this.buttonDarkMode.setAttribute('aria-label', 'Switch to dark mode');
@@ -1751,36 +1808,39 @@
       this.button.innerHTML =
         '<svg viewBox="-40 -40 80 80" aria-hidden="true" focusable="false">' +
           '<circle cx="0" cy="0" r="34" fill="#303841"/>' +
-          '<g transform="translate(4 0)" fill="#aeb5bc" fill-rule="evenodd">' +
-            '<path d="M-20 -24 H1 C15 -24 20 -13 20 0 C20 13 15 24 1 24 H-20 Z M-6 -11 V11 H0 C7 11 9 6 9 0 C9 -6 7 -11 0 -11 Z"/>' +
+          '<g transform="translate(3 0)" fill="#aeb5bc" fill-rule="evenodd">' +
+            '<path d="M-16 -20 H0 C11.8 -20 16 -10.5 16 0 C16 10.5 11.8 20 0 20 H-16 Z M-5 -9.5 V9.5 H0 C5.6 9.5 7.4 5.1 7.4 0 C7.4 -5.1 5.6 -9.5 0 -9.5 Z"/>' +
           '</g>' +
-          '<g transform="translate(1 0)" fill="#f8f9fa">' +
+          '<g transform="translate(0.4 0)" fill="#f8f9fa">' +
             '<circle cx="4.5" cy="-8.5" r="3"/>' +
             '<rect x="1.5" y="-2" width="6" height="17" rx="3"/>' +
           '</g>' +
         '</svg>';
-      this.element = L.DomUtil.create('div', 'live-status', this.container);
-      this.element.textContent = 'Live vehicles: connecting...';
       const collapsed = localStorage.getItem('developerInfoCollapsed') === 'true';
-      this.container.classList.toggle('collapsed', collapsed);
       this.button.setAttribute('aria-label', collapsed ? 'Show developer info' : 'Hide developer info');
       this.button.setAttribute('aria-pressed', collapsed ? 'true' : 'false');
-      L.DomEvent.disableClickPropagation(this.container);
+      satelliteButton = this.buttonSatellite;
+      darkModeButton = this.buttonDarkMode;
+      L.DomEvent.disableClickPropagation(this.buttonStack);
+      L.DomEvent.on(this.buttonSatellite, 'click', function () {
+        setSatelliteMode(!satelliteMode);
+      });
       L.DomEvent.on(this.buttonDarkMode, 'click', function () {
         const nextDarkMode = !document.body.classList.contains('dark-mode');
         setDarkMode(nextDarkMode);
       });
       L.DomEvent.on(this.button, 'click', function () {
-        const nextCollapsed = !statusControl.container.classList.contains('collapsed');
-        statusControl.container.classList.toggle('collapsed', nextCollapsed);
-        statusControl.button.setAttribute('aria-label', nextCollapsed ? 'Show developer info' : 'Hide developer info');
-        statusControl.button.setAttribute('aria-pressed', nextCollapsed ? 'true' : 'false');
+        const nextCollapsed = !statusControl.element.classList.contains('collapsed');
+        statusControl.element.classList.toggle('collapsed', nextCollapsed);
+        modeControl.button.setAttribute('aria-label', nextCollapsed ? 'Show developer info' : 'Hide developer info');
+        modeControl.button.setAttribute('aria-pressed', nextCollapsed ? 'true' : 'false');
         localStorage.setItem('developerInfoCollapsed', String(nextCollapsed));
       });
       setDarkMode(localStorage.getItem('mapDarkMode') === 'true');
-      return this.container;
+      setSatelliteMode(satelliteMode);
+      return this.buttonStack;
     };
-    statusControl.addTo(map);
+    modeControl.addTo(map);
 
     function shouldShowVehicle(vehicle) {
       return vehicle.agency === 'metrolink' || vehicle.agency === 'amtrak' || railRouteIds.has(vehicle.routeId);
