@@ -480,7 +480,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.75';
+    const APP_VERSION = 'Beta 1.76';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -724,6 +724,76 @@
       return layerGroup;
     }
 
+    function isCAndKSharedSegment(firstCoordinate, secondCoordinate) {
+      const midLongitude = (firstCoordinate[0] + secondCoordinate[0]) / 2;
+      const midLatitude = (firstCoordinate[1] + secondCoordinate[1]) / 2;
+      return midLongitude >= -118.389
+        && midLongitude <= -118.377
+        && midLatitude >= 33.923
+        && midLatitude <= 33.9515;
+    }
+
+    function renderCAndKLineSplit() {
+      const layerGroup = L.layerGroup().addTo(map);
+      const cLineColor = metroLineColors['Metro C Line'];
+      const kLineColor = metroLineColors['Metro K Line'];
+
+      function drawSegment(first, second, options, popup) {
+        const segment = [
+          [first[1], first[0]],
+          [second[1], second[0]]
+        ];
+        L.polyline(segment, options).bindPopup(popup).addTo(layerGroup);
+      }
+
+      function draw() {
+        layerGroup.clearLayers();
+        metroLines.features
+          .filter((feature) => feature.properties.LABEL === 'Metro C Line' || feature.properties.LABEL === 'Metro K Line')
+          .forEach(function (feature) {
+            const label = feature.properties.LABEL;
+            const color = metroLineColors[label] || '#555555';
+            const popup = '<strong>' + label + '</strong><br>' + feature.properties.STATUS;
+            lineStringsForFeature(feature).forEach(function (lineString) {
+              for (let pointIndex = 0; pointIndex < lineString.length - 1; pointIndex += 1) {
+                const first = lineString[pointIndex];
+                const second = lineString[pointIndex + 1];
+                const shared = isCAndKSharedSegment(first, second);
+                if (!shared) {
+                  drawSegment(first, second, {
+                    color,
+                    weight: 5,
+                    opacity: feature.properties.STATUS === 'Construction' ? 0.55 : 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                  }, popup);
+                } else if (label === 'Metro K Line') {
+                  const sharedPopup = '<strong>Metro C & K Line</strong><br>Existing';
+                  L.polyline(offsetSegmentCoordinates(first, second, -2), {
+                    color: cLineColor,
+                    weight: 3,
+                    opacity: 0.95,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                  }).bindPopup(sharedPopup).addTo(layerGroup);
+                  L.polyline(offsetSegmentCoordinates(first, second, 2), {
+                    color: kLineColor,
+                    weight: 3,
+                    opacity: 0.95,
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                  }).bindPopup(sharedPopup).addTo(layerGroup);
+                }
+              }
+            });
+          });
+      }
+
+      draw();
+      map.on('zoomend', draw);
+      return layerGroup;
+    }
+
     const dLineLaCienegaLongitude = -118.3768;
 
     function isDLineConstruction(feature) {
@@ -778,9 +848,34 @@
       return layerGroup;
     }
 
+    const jLineLayer = L.geoJSON(metroLines, {
+      filter: function (feature) {
+        return feature.properties.LABEL === 'Metro J Line';
+      },
+      style: function (feature) {
+        const properties = feature.properties;
+        return {
+          color: metroLineColors[properties.LABEL] || '#555555',
+          weight: 5,
+          opacity: properties.STATUS === 'Construction' ? 0.55 : 0.9,
+          dashArray: properties.STATUS === 'Construction' ? '8 8' : null
+        };
+      },
+      onEachFeature: function (feature, layer) {
+        const properties = feature.properties;
+        layer.bindPopup(
+          '<strong>' + properties.LABEL + '</strong><br>' + properties.STATUS
+        );
+      }
+    }).addTo(map);
+
     const metroLayer = L.geoJSON(metroLines, {
       filter: function (feature) {
-        return !sharedMetroLineStyles[feature.properties.LABEL] && !isDLineConstruction(feature);
+        return feature.properties.LABEL !== 'Metro J Line'
+          && feature.properties.LABEL !== 'Metro C Line'
+          && feature.properties.LABEL !== 'Metro K Line'
+          && !sharedMetroLineStyles[feature.properties.LABEL]
+          && !isDLineConstruction(feature);
       },
       style: function (feature) {
         const properties = feature.properties;
@@ -798,6 +893,7 @@
         );
       }
     }).addTo(map);
+    const cAndKLineLayer = renderCAndKLineSplit();
     const sharedMetroLayer = renderSharedMetroSegments();
     const dLineConstructionLayer = renderDLineConstructionSplit();
 
