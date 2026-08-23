@@ -368,7 +368,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.66';
+    const APP_VERSION = 'Beta 1.67';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -872,6 +872,24 @@
         .filter((trainNumber) => trainNumber && delayedNumbers.has(trainNumber)));
     }
 
+    function delayedCommuterVehicleHasNextStopInCluster(vehicle, cluster) {
+      const nextStopId = String(vehicle.nextStopId || '').trim();
+      const nextStopName = nextStopId ? metrolinkStopName(nextStopId) : '';
+      if (!nextStopId && !nextStopName) return false;
+      return cluster.records.some(function (record) {
+        if (record.agency !== 'Metrolink') return false;
+        if (nextStopId && record.id && String(record.id) === nextStopId) return true;
+        return nextStopName && stationNamesMatch(record.name, nextStopName);
+      });
+    }
+
+    function stationHasDelayedNextStopTrain(stationEntry) {
+      return liveCommuterVehicles.some(function (vehicle) {
+        return commuterVehicleLooksDelayed(vehicle) &&
+          delayedCommuterVehicleHasNextStopInCluster(vehicle, stationEntry.cluster);
+      });
+    }
+
     function alertDisplayableAtStation(alert) {
       if (alert.category === 'maintenance') return alert.activeNow || alert.maintenanceUpcoming;
       return alert.activeNow !== false;
@@ -927,6 +945,7 @@
       if (!routeKeys.size) return false;
       const delayedIncomingTrainNumbers = delayedTrainNumbersFromArrivals(arrivals);
       if (delayedIncomingTrainNumbers.size) return true;
+      if (stationHasDelayedNextStopTrain(stationEntry)) return true;
       return metrolinkAlerts.some(function (alert) {
         if (!alert.activeNow || !alertHasRouteMatch(alert, routeKeys)) return false;
         return alert.category === 'delay' || alert.category === 'maintenance';
