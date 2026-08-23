@@ -9,6 +9,7 @@ import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
 const root = dirname(fileURLToPath(import.meta.url));
 const htmlPath = join(root, 'LA Metro & Metrolink Live Map.html');
 
+loadLocalEnv(join(root, 'private', '.env'));
 loadLocalEnv(join(root, '.env'));
 
 const port = Number(process.env.PORT || 8080);
