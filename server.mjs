@@ -64,6 +64,7 @@ const prebuiltScheduleCache = {
   metroGj: { loadedAt: 0, value: null, pending: null }
 };
 const scheduleHorizonSeconds = 6 * 60 * 60;
+const metroRailServiceDayStartHour = 4;
 const scheduleTimeZone = 'America/Los_Angeles';
 
 function loadLocalEnv(path) {
@@ -846,28 +847,48 @@ function routeMatchesWhitelist(entry, routeWhitelist) {
   });
 }
 
+function serviceDayPartsForNow(nowParts, startHour = 0) {
+  return shiftedDateParts(nowParts, nowParts.hour < startHour ? -1 : 0);
+}
+
+function destinationKeyForSchedule(entry) {
+  return [
+    String(entry.destination || 'Scheduled train').trim().toLowerCase(),
+    String(entry.line || entry.routeId || '').trim().toLowerCase()
+  ].join(':');
+}
+
 function upcomingSchedulesForFeed(feed, stopIds, names, options = {}) {
   if (typeof options === 'number') options = { limit: options };
   const limit = options.limit ?? 10;
   const maxRows = options.maxRows ?? limit;
   const horizonSeconds = options.horizonSeconds ?? scheduleHorizonSeconds;
+  const fullServiceDay = Boolean(options.fullServiceDay);
+  const serviceDayStartHour = options.serviceDayStartHour ?? 0;
   const routeWhitelist = options.routeWhitelist
     ? new Set(options.routeWhitelist.map((route) => String(route).trim().toLowerCase()))
     : null;
   const now = new Date();
   const nowSeconds = Math.floor(now.getTime() / 1000);
   const baseParts = getZonedParts(now);
-  const serviceDates = [-1, 0, 1].map((offset) => shiftedDateParts(baseParts, offset));
+  const currentServiceParts = serviceDayPartsForNow(baseParts, serviceDayStartHour);
+  const serviceDates = fullServiceDay
+    ? [
+      { parts: currentServiceParts, period: 'current' },
+      { parts: shiftedDateParts(currentServiceParts, 1), period: 'next' }
+    ]
+    : [-1, 0, 1].map((offset) => ({ parts: shiftedDateParts(baseParts, offset), period: 'current' }));
   const candidates = [];
   const matchedStopIds = getStopIdsForSchedule(feed, stopIds, names);
 
   matchedStopIds.forEach((stopId) => {
     (feed.stopTimesByStop.get(stopId) || []).forEach((entry) => {
       if (!routeMatchesWhitelist(entry, routeWhitelist)) return;
-      serviceDates.forEach((dateParts) => {
+      serviceDates.forEach(({ parts: dateParts, period }) => {
         if (!serviceIsActive(feed, entry.serviceId, dateParts)) return;
         const timestamp = zonedDateTimeEpochSeconds(dateParts, entry.seconds);
-        if (timestamp < nowSeconds - 60 || timestamp > nowSeconds + horizonSeconds) return;
+        if (timestamp < nowSeconds - 60) return;
+        if (!fullServiceDay && timestamp > nowSeconds + horizonSeconds) return;
         candidates.push({
           agency: entry.agency,
           line: entry.line,
@@ -876,7 +897,8 @@ function upcomingSchedulesForFeed(feed, stopIds, names, options = {}) {
           directionId: entry.directionId,
           stopId: entry.stopId,
           stopName: entry.stopName,
-          time: timestamp
+          time: timestamp,
+          servicePeriod: period
         });
       });
     });
@@ -893,7 +915,26 @@ function upcomingSchedulesForFeed(feed, stopIds, names, options = {}) {
     if (!unique.has(key)) unique.set(key, candidate);
   });
 
-  return Array.from(unique.values()).slice(0, maxRows);
+  if (!fullServiceDay) return Array.from(unique.values()).slice(0, maxRows);
+
+  const currentRows = [];
+  const firstNextByDestination = new Map();
+  Array.from(unique.values()).forEach((candidate) => {
+    if (candidate.servicePeriod === 'current') {
+      currentRows.push(candidate);
+      return;
+    }
+    const destinationKey = destinationKeyForSchedule(candidate);
+    if (!firstNextByDestination.has(destinationKey) ||
+      candidate.time < firstNextByDestination.get(destinationKey).time) {
+      firstNextByDestination.set(destinationKey, { ...candidate, firstNextServiceDay: true });
+    }
+  });
+
+  return currentRows
+    .concat(Array.from(firstNextByDestination.values()))
+    .sort((first, second) => first.time - second.time)
+    .slice(0, maxRows);
 }
 
 function splitQueryList(value) {
@@ -918,7 +959,9 @@ async function sendStationSchedule(requestUrl, response) {
     try {
       const feed = await fetchStaticScheduleFeed('metro');
       metro = upcomingSchedulesForFeed(feed, metroRailStopIds, names, {
-        maxRows: 60
+        fullServiceDay: true,
+        serviceDayStartHour: metroRailServiceDayStartHour,
+        maxRows: 500
       });
     } catch (error) {
       errors.metro = error.message;
@@ -930,7 +973,9 @@ async function sendStationSchedule(requestUrl, response) {
       const feed = await fetchPrebuiltMetroGjScheduleFeed();
       metroBrt = upcomingSchedulesForFeed(feed, metroBrtStopIds, names, {
         routeWhitelist: ['g', 'j', '901', '910', '950'],
-        maxRows: 60
+        fullServiceDay: true,
+        serviceDayStartHour: 0,
+        maxRows: 500
       });
     } catch (error) {
       errors.metroBrt = error.message;
@@ -940,7 +985,11 @@ async function sendStationSchedule(requestUrl, response) {
   if (metrolinkStopIds.length) {
     try {
       const feed = await fetchStaticScheduleFeed('metrolink');
-      metrolink = upcomingSchedulesForFeed(feed, metrolinkStopIds, names, 12);
+      metrolink = upcomingSchedulesForFeed(feed, metrolinkStopIds, names, {
+        fullServiceDay: true,
+        serviceDayStartHour: 0,
+        maxRows: 500
+      });
     } catch (error) {
       errors.metrolink = error.message;
     }

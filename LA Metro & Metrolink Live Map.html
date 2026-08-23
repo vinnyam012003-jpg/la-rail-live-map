@@ -99,7 +99,7 @@
 
     .arrival-board { min-width: 255px; max-width: 330px; margin-top: 8px; }
     .arrival-heading { margin: 7px 0 3px; font-weight: 700; border-top: 1px solid #ddd; padding-top: 6px; }
-    .arrival-row { display: grid; grid-template-columns: minmax(92px, max-content) minmax(130px, 1fr) auto; gap: 16px; align-items: center; padding: 4px 0; }
+    .arrival-row { display: grid; grid-template-columns: minmax(86px, 150px) minmax(130px, 1fr) minmax(62px, 74px) auto; gap: 16px; align-items: center; padding: 4px 0; }
     .arrival-line { font-weight: 700; }
     .arrival-destination { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .arrival-time { font-weight: 700; white-space: nowrap; }
@@ -109,7 +109,7 @@
     .scheduled-time-row,
     .upcoming-stop-row {
       display: grid;
-      grid-template-columns: minmax(92px, max-content) minmax(130px, 1fr) minmax(62px, max-content) auto;
+      grid-template-columns: minmax(86px, 150px) minmax(130px, 1fr) minmax(62px, 74px) auto;
       gap: 16px;
       align-items: center;
       padding: 4px 0;
@@ -359,7 +359,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.58';
+    const APP_VERSION = 'Beta 1.59';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -985,8 +985,8 @@
     function arrivalRow(line, destination, timestamp, timeFormatter = formatArrivalTime, track = '') {
       return '<div class="arrival-row">' +
         '<span class="arrival-line">' + escapeHtml(line) + '</span>' +
-        '<span class="arrival-destination">to ' + escapeHtml(destination) +
-        (track ? ' <span class="arrival-track">' + escapeHtml(track) + '</span>' : '') + '</span>' +
+        '<span class="arrival-destination">to ' + escapeHtml(destination) + '</span>' +
+        '<span class="arrival-track">' + escapeHtml(track || '') + '</span>' +
         '<span class="arrival-time">' + timeFormatter(timestamp) + '</span>' +
         '</div>';
     }
@@ -1410,9 +1410,9 @@
       }
       if (hasMetroRail || hasMetroBrt || hasMetrolink) {
         const scheduledMetro = stationSchedule.schedules?.metro || [];
-        const scheduledMetrolink = metrolinkScheduledRows.length
-          ? metrolinkScheduledRows
-          : stationSchedule.schedules?.metrolink || [];
+        const scheduledMetrolink = stationSchedule.schedules?.metrolink?.length
+          ? stationSchedule.schedules.metrolink
+          : metrolinkScheduledRows;
         board += '<div class="arrival-heading">Scheduled times</div>';
 
         if (hasMetroRail) {
