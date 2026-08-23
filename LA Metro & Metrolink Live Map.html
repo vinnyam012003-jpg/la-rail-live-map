@@ -102,6 +102,10 @@
       color: #f4f6f8;
     }
 
+    body.dark-mode:not(.satellite-mode) .leaflet-tile-pane {
+      filter: brightness(1.28) contrast(0.88) saturate(0.82);
+    }
+
     .train-marker {
       display: grid;
       width: 24px;
@@ -389,6 +393,57 @@
     .sheet-detail > strong:first-child { font-size: 24px; }
     .sheet-detail .arrival-board { max-width: none; }
 
+    body.dark-mode .sheet-backdrop {
+      background: rgba(3, 8, 13, 0.58);
+    }
+
+    body.dark-mode .map-sheet {
+      background: #20262d;
+      color: #f4f6f8;
+      box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.46);
+    }
+
+    body.dark-mode .sheet-handle-area::after {
+      background: #5e6873;
+    }
+
+    body.dark-mode .sheet-close {
+      background: #303842;
+      color: #e9edf1;
+    }
+
+    body.dark-mode .sheet-heading,
+    body.dark-mode .sheet-detail,
+    body.dark-mode .sheet-choice,
+    body.dark-mode .scheduled-destination {
+      color: #f4f6f8;
+    }
+
+    body.dark-mode .sheet-choice {
+      border-color: #3a434e;
+      background: #28313a;
+    }
+
+    body.dark-mode .sheet-choice:hover,
+    body.dark-mode .sheet-choice:focus-visible {
+      background: #303a44;
+    }
+
+    body.dark-mode .sheet-choice-subtitle,
+    body.dark-mode .arrival-note,
+    body.dark-mode .arrival-track {
+      color: #aeb8c2;
+    }
+
+    body.dark-mode .arrival-heading {
+      border-top-color: #3a434e;
+    }
+
+    body.dark-mode .sheet-back,
+    body.dark-mode .sheet-choice-chevron {
+      color: #60c4d2;
+    }
+
     @media (max-width: 700px) {
       .map-sheet {
         bottom: max(10px, env(safe-area-inset-bottom, 0px));
@@ -425,7 +480,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.73';
+    const APP_VERSION = 'Beta 1.74';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -519,6 +574,7 @@
 
     function refreshBaseMap() {
       const darkModeEnabled = localStorage.getItem('mapDarkMode') === 'true';
+      document.body.classList.toggle('satellite-mode', satelliteMode);
       const nextUrl = satelliteMode ? satelliteTileUrl : darkModeEnabled ? darkTileUrl : lightTileUrl;
       const nextOptions = satelliteMode ? satelliteTileLayerOptions : tileLayerOptions;
       if (baseTileLayer._url !== nextUrl) {
