@@ -480,7 +480,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.77';
+    const APP_VERSION = 'Beta 1.78';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -748,17 +748,10 @@
                     lineCap: 'round',
                     lineJoin: 'round'
                   }, popup);
-                } else if (label === 'Metro K Line') {
+                } else {
                   const sharedPopup = '<strong>Metro C & K Line</strong><br>Existing';
-                  L.polyline(offsetSegmentCoordinates(first, second, 2), {
-                    color: cLineColor,
-                    weight: 3,
-                    opacity: 0.95,
-                    lineCap: 'round',
-                    lineJoin: 'round'
-                  }).bindPopup(sharedPopup).addTo(layerGroup);
-                  L.polyline(offsetSegmentCoordinates(first, second, -2), {
-                    color: kLineColor,
+                  L.polyline(offsetSegmentCoordinates(first, second, label === 'Metro C Line' ? 2 : -2), {
+                    color: label === 'Metro C Line' ? cLineColor : kLineColor,
                     weight: 3,
                     opacity: 0.95,
                     lineCap: 'round',
