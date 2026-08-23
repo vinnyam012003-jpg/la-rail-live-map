@@ -480,7 +480,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.80';
+    const APP_VERSION = 'Beta 1.81';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -553,7 +553,7 @@
     const lightTileUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
     const darkTileUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const satelliteTileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-    const satelliteLabelUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}';
+    const satelliteLabelUrl = 'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png';
     const tileLayerOptions = {
       maxZoom: 20,
       attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
@@ -563,8 +563,8 @@
       attribution: 'Tiles &copy; Esri'
     };
     const satelliteLabelLayerOptions = {
-      maxZoom: 19,
-      attribution: 'Labels &copy; Esri'
+      maxZoom: 20,
+      attribution: 'Labels &copy; CARTO'
     };
     let darkModeButton = null;
     let satelliteButton = null;
