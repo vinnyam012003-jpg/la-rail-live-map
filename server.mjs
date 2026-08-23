@@ -208,7 +208,7 @@ function routeKeysFromVehicle(vehicle) {
 }
 
 function alertTextLooksDelayRelated(text) {
-  return /\b(delay|delayed|late|cancel|canceled|cancelled|closure|closed|bus bridge|replacement bus|suspended|incident)\b/i.test(text);
+  return /\b(delay|delayed|late|hold|holding|cancel|canceled|cancelled|closure|closed|bus bridge|replacement bus|suspended|incident)\b/i.test(text);
 }
 
 function vehicleLooksDelayed(vehicle) {
@@ -273,19 +273,18 @@ function alertMatchesVehicle(alert, vehicle) {
 }
 
 function delayReasonFromAlerts(vehicle, alerts) {
-  const delayed = vehicleLooksDelayed(vehicle);
   const trainNumber = normalizeTrainNumber(vehicle.label || vehicle.id);
   const exactTrainAlert = alerts.find((alert) =>
     trainNumber &&
     alert.trainNumbers.has(trainNumber) &&
-    (alert.delayRelated || delayed)
+    alert.delayRelated
   );
   if (exactTrainAlert) return exactTrainAlert.text;
 
   const exactTripAlert = alerts.find((alert) =>
     String(vehicle.tripId || '').trim() &&
     alert.tripIds.has(String(vehicle.tripId || '').trim()) &&
-    (alert.delayRelated || delayed)
+    alert.delayRelated
   );
   if (exactTripAlert) return exactTripAlert.text;
 
