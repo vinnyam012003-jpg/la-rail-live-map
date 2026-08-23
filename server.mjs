@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,6 +71,7 @@ const metroRailServiceDayStartHour = 4;
 const scheduleTimeZone = 'America/Los_Angeles';
 const serverStartedAt = Date.now();
 const devStatusSessionToken = randomBytes(32).toString('hex');
+const telemetryPersistencePath = process.env.DEV_TELEMETRY_FILE || join(root, 'private', 'viewer-telemetry.json');
 const telemetry = {
   requests: [],
   endpointCounts: new Map(),
@@ -84,6 +85,7 @@ const telemetry = {
   vehicleCounts: { metro: 0, metrolink: 0, amtrak: 0 },
   scheduleSources: new Map()
 };
+let telemetrySaveTimer = null;
 
 function appVersion() {
   try {
@@ -113,11 +115,21 @@ function endpointName(pathname) {
 
 function pruneTelemetry() {
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const requestCountBefore = telemetry.requests.length;
+  const viewerEventCountBefore = telemetry.viewerEvents.length;
+  const viewerCountBefore = telemetry.viewers.size;
   telemetry.requests = telemetry.requests.filter((entry) => entry.time >= cutoff);
   telemetry.viewerEvents = telemetry.viewerEvents.filter((entry) => entry.time >= cutoff);
   telemetry.metroApiCalls = telemetry.metroApiCalls.filter((entry) => entry.time >= Date.now() - 15 * 60 * 1000);
   for (const [viewerId, viewer] of telemetry.viewers.entries()) {
     if (viewer.lastSeen < cutoff) telemetry.viewers.delete(viewerId);
+  }
+  if (
+    requestCountBefore !== telemetry.requests.length ||
+    viewerEventCountBefore !== telemetry.viewerEvents.length ||
+    viewerCountBefore !== telemetry.viewers.size
+  ) {
+    scheduleTelemetrySave();
   }
 }
 
@@ -161,6 +173,85 @@ function recordRequest(request, response, url) {
   viewer.lastSeen = now;
   telemetry.viewers.set(viewerId, viewer);
   telemetry.viewerEvents.push({ time: now, viewerId });
+  scheduleTelemetrySave();
+}
+
+function cleanPersistentEntries(entries) {
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => ({
+      time: Number(entry?.time),
+      endpoint: typeof entry?.endpoint === 'string' ? entry.endpoint.slice(0, 120) : undefined,
+      method: typeof entry?.method === 'string' ? entry.method.slice(0, 12) : undefined,
+      viewerId: typeof entry?.viewerId === 'string' && /^[a-f0-9]{32}$/.test(entry.viewerId) ? entry.viewerId : undefined
+    }))
+    .filter((entry) => Number.isFinite(entry.time) && entry.time >= cutoff);
+}
+
+function loadPersistentTelemetry() {
+  if (!existsSync(telemetryPersistencePath)) return;
+
+  try {
+    const saved = JSON.parse(readFileSync(telemetryPersistencePath, 'utf8'));
+    const savedRequests = cleanPersistentEntries(saved.requests);
+    const savedViewerEvents = cleanPersistentEntries(saved.viewerEvents)
+      .filter((entry) => entry.viewerId);
+
+    telemetry.requests = savedRequests
+      .filter((entry) => entry.endpoint)
+      .map((entry) => ({ time: entry.time, endpoint: entry.endpoint, method: entry.method || 'GET' }));
+    telemetry.viewerEvents = savedViewerEvents
+      .map((entry) => ({ time: entry.time, viewerId: entry.viewerId }));
+
+    telemetry.endpointCounts = new Map();
+    for (const requestEntry of telemetry.requests) {
+      telemetry.endpointCounts.set(requestEntry.endpoint, (telemetry.endpointCounts.get(requestEntry.endpoint) || 0) + 1);
+    }
+
+    telemetry.viewers = new Map();
+    for (const viewerEntry of telemetry.viewerEvents) {
+      const viewer = telemetry.viewers.get(viewerEntry.viewerId) || { firstSeen: viewerEntry.time, lastSeen: viewerEntry.time };
+      viewer.firstSeen = Math.min(viewer.firstSeen, viewerEntry.time);
+      viewer.lastSeen = Math.max(viewer.lastSeen, viewerEntry.time);
+      telemetry.viewers.set(viewerEntry.viewerId, viewer);
+    }
+
+    addAppLog('telemetry-load', `Loaded 24-hour viewer telemetry from ${telemetryPersistencePath}`, {
+      requests: telemetry.requests.length,
+      viewerEvents: telemetry.viewerEvents.length,
+      uniqueViewers: telemetry.viewers.size
+    });
+  } catch (error) {
+    addAppLog('telemetry-load-error', 'Could not load persistent viewer telemetry', { error: error.message });
+  }
+}
+
+function persistentTelemetryPayload() {
+  pruneTelemetry();
+  return {
+    savedAt: new Date().toISOString(),
+    requests: telemetry.requests,
+    viewerEvents: telemetry.viewerEvents
+  };
+}
+
+async function savePersistentTelemetry() {
+  telemetrySaveTimer = null;
+  try {
+    await mkdir(dirname(telemetryPersistencePath), { recursive: true });
+    await writeFile(telemetryPersistencePath, JSON.stringify(persistentTelemetryPayload()), 'utf8');
+  } catch (error) {
+    addAppLog('telemetry-save-error', 'Could not save persistent viewer telemetry', { error: error.message });
+  }
+}
+
+function scheduleTelemetrySave() {
+  if (telemetrySaveTimer) return;
+  telemetrySaveTimer = setTimeout(() => {
+    savePersistentTelemetry();
+  }, 5000);
+  telemetrySaveTimer.unref?.();
 }
 
 function loadLocalEnv(path) {
@@ -1565,6 +1656,7 @@ function telemetrySnapshot() {
     uniqueViewers24h: uniqueViewerCountSince(24 * 60 * 60 * 1000),
     pageLoads24h: telemetry.requests.filter((entry) => entry.endpoint === 'map').length,
     viewerHistory: viewerHistoryByHour(),
+    telemetryStorage: telemetryPersistencePath,
     recentRequests: recentRequests.length,
     endpointRows,
     metroApiCalls15m: telemetry.metroApiCalls.length,
@@ -1636,6 +1728,7 @@ function sendDevStatusPage(response) {
     <div class="card"><div class="muted">CPU used by process</div><div class="big">${data.cpuSeconds}s</div><div class="muted">Render has the better CPU graph</div></div>
     <div class="card"><div class="muted">Active viewers</div><div class="big">${data.activeViewers}</div><div class="muted">Approx. active in last 2 min</div></div>
     <div class="card"><div class="muted">Unique viewers</div><div class="big">${data.uniqueViewers24h}</div><div class="muted">15m: ${data.uniqueViewers15m} · 1h: ${data.uniqueViewers1h} · 24h: ${data.uniqueViewers24h}</div></div>
+    <div class="card"><div class="muted">Viewer history storage</div><div class="big">File</div><div class="muted">${htmlEscape(data.telemetryStorage)}</div></div>
     <div class="card"><div class="muted">Metro API calls</div><div class="big">${data.metroApiCalls15m}</div><div class="muted">Last 15 minutes</div></div>
     <div class="card"><div class="muted">Metrolink feed</div><div class="big">${data.metrolinkLiveFetches}</div><div class="muted">Live fetches · ${data.metrolinkCacheHits} cache hits</div></div>
   </section>
@@ -1732,6 +1825,8 @@ function sendJson(response, status, value) {
   });
   response.end(JSON.stringify(value));
 }
+
+loadPersistentTelemetry();
 
 const server = http.createServer(async (request, response) => {
   try {
