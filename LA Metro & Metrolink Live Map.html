@@ -359,7 +359,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.59';
+    const APP_VERSION = 'Beta 1.60';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -1522,7 +1522,7 @@
       if (!status || /on\s*time|early|normal|good/i.test(status)) return '';
       const reason = String(vehicle.delayReason || '').trim();
       if (reason && reason.toLowerCase() !== status.toLowerCase()) return reason;
-      return status && !/^delayed$/i.test(status) ? status : 'reported by Metrolink feed';
+      return status && !/^delayed$/i.test(status) ? status : 'Delay';
     }
 
     function stationSheetIcon() {
@@ -1685,7 +1685,6 @@
         (nextStop ? 'Next station: ' + escapeHtml(nextStop.name) + '<br>' +
           (nextStopTrack ? 'Track: ' + escapeHtml(nextStopTrack) + '<br>' : '') +
           'Arrives in: ' + formatArrivalTime(nextStop.time) + '<br>' : '') +
-        (vehicle.delayStatus ? 'Status: ' + escapeHtml(vehicle.delayStatus) + '<br>' : '') +
         (delayReason ? 'Delay: ' + escapeHtml(delayReason) + '<br>' : '') +
         'Updated: ' + updated +
         upcomingStopList;
