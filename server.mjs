@@ -19,6 +19,7 @@ const metrolinkFeed = {
   cacheMs: 30000
 };
 const metrolinkTripUpdatesFeed = 'https://metrolink-gtfsrt.gbsdigital.us/feed/gtfsrt-trips';
+const metrolinkAlertsFeed = 'https://cdn.simplifytransit.com/metrolink/alerts/service-alerts.pb';
 const metrolinkPublicFeed = 'https://rtt.metrolinktrains.com/trainlist.json';
 const metrolinkCache = { fetchedAt: 0, value: null, pending: null };
 const metroFeeds = {
@@ -161,6 +162,140 @@ async function fetchMetrolinkTripUpdates() {
     });
 }
 
+function textFromGtfsTranslatedString(value) {
+  const translations = value?.translation || [];
+  const english = translations.find((translation) => /^en\b/i.test(String(translation.language || '')));
+  return String((english || translations[0])?.text || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeTrainNumber(value) {
+  const match = String(value || '').match(/\d{2,5}/);
+  return match ? match[0] : '';
+}
+
+function trainNumbersFromAlertText(text) {
+  const numbers = new Set();
+  const pattern = /\b(?:train|trains?)\s+([A-Z]?\d{2,5}[A-Z]?)\b/gi;
+  let match;
+  while ((match = pattern.exec(text))) {
+    const number = normalizeTrainNumber(match[1]);
+    if (number) numbers.add(number);
+  }
+  return numbers;
+}
+
+function normalizeMetrolinkRouteKey(value) {
+  let key = String(value || '').toLowerCase();
+  key = key.replace(/\bmetrolink\b/g, '');
+  key = key.replace(/\bline\b/g, '');
+  key = key.replace(/\bpacific\s+surfliner\b/g, 'pac surf');
+  key = key.replace(/\bantelope\s+valley\b/g, 'av');
+  key = key.replace(/\bsan\s+bernardino\b/g, 'sb');
+  key = key.replace(/\binland\s+emp(?:ire)?\.?\s*[-/]\s*orange\s+co(?:unty)?\.?\b/g, 'ieoc');
+  key = key.replace(/\bventura\s+county\b/g, 'vc');
+  key = key.replace(/\borange\s+county\b/g, 'oc');
+  key = key.replace(/\b91\s*\/\s*perris\s+valley\b/g, '91pv');
+  return key.replace(/[^a-z0-9]/g, '');
+}
+
+function routeKeysFromVehicle(vehicle) {
+  return [
+    vehicle.routeId,
+    vehicle.rawRouteId,
+    vehicle.routeName,
+    vehicle.line
+  ].map(normalizeMetrolinkRouteKey).filter(Boolean);
+}
+
+function alertTextLooksDelayRelated(text) {
+  return /\b(delay|delayed|late|cancel|canceled|cancelled|closure|closed|bus bridge|replacement bus|suspended|incident)\b/i.test(text);
+}
+
+function vehicleLooksDelayed(vehicle) {
+  const status = String(vehicle.delayStatus || '').trim();
+  return Boolean(status) && !/on\s*time|early|normal|good/i.test(status);
+}
+
+async function fetchMetrolinkDelayAlerts() {
+  const response = await fetch(metrolinkAlertsFeed, {
+    signal: AbortSignal.timeout(12000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Metrolink alerts feed returned HTTP ${response.status}`);
+  }
+
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  const message = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(buffer);
+
+  return message.entity
+    .filter((entity) => entity.alert)
+    .map((entity) => {
+      const alert = entity.alert;
+      const header = textFromGtfsTranslatedString(alert.headerText);
+      const description = textFromGtfsTranslatedString(alert.descriptionText);
+      const text = [header, description].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      const tripIds = new Set();
+      const routeKeys = new Set();
+      const trainNumbers = trainNumbersFromAlertText(text);
+
+      (alert.informedEntity || []).forEach((informedEntity) => {
+        if (informedEntity.trip?.tripId) tripIds.add(String(informedEntity.trip.tripId));
+        if (informedEntity.trip?.routeId) routeKeys.add(normalizeMetrolinkRouteKey(informedEntity.trip.routeId));
+        if (informedEntity.routeId) routeKeys.add(normalizeMetrolinkRouteKey(informedEntity.routeId));
+      });
+
+      return {
+        id: entity.id,
+        text,
+        tripIds,
+        routeKeys,
+        trainNumbers,
+        delayRelated: alertTextLooksDelayRelated(text)
+      };
+    })
+    .filter((alert) => alert.text);
+}
+
+function alertMatchesVehicle(alert, vehicle) {
+  const tripId = String(vehicle.tripId || '').trim();
+  if (tripId && alert.tripIds.has(tripId)) return true;
+
+  const trainNumber = normalizeTrainNumber(vehicle.label || vehicle.id);
+  if (trainNumber && alert.trainNumbers.has(trainNumber)) return true;
+
+  if (alert.routeKeys.size) {
+    const vehicleRouteKeys = routeKeysFromVehicle(vehicle);
+    if (vehicleRouteKeys.some((key) => alert.routeKeys.has(key))) return true;
+  }
+
+  return false;
+}
+
+function delayReasonFromAlerts(vehicle, alerts) {
+  const delayed = vehicleLooksDelayed(vehicle);
+  const trainNumber = normalizeTrainNumber(vehicle.label || vehicle.id);
+  const exactTrainAlert = alerts.find((alert) =>
+    trainNumber &&
+    alert.trainNumbers.has(trainNumber) &&
+    (alert.delayRelated || delayed)
+  );
+  if (exactTrainAlert) return exactTrainAlert.text;
+
+  const exactTripAlert = alerts.find((alert) =>
+    String(vehicle.tripId || '').trim() &&
+    alert.tripIds.has(String(vehicle.tripId || '').trim()) &&
+    (alert.delayRelated || delayed)
+  );
+  if (exactTripAlert) return exactTripAlert.text;
+
+  const routeDelayAlert = alerts.find((alert) =>
+    alert.delayRelated &&
+    alertMatchesVehicle(alert, vehicle)
+  );
+  return routeDelayAlert?.text || '';
+}
+
 async function fetchPublicMetrolinkAndAmtrakVehicles() {
   const response = await fetch(metrolinkPublicFeed, {
     signal: AbortSignal.timeout(12000)
@@ -219,21 +354,25 @@ async function getCachedMetrolinkVehicles() {
     metrolinkCache.pending = Promise.allSettled([
       fetchMetrolinkVehicles(),
       fetchPublicMetrolinkAndAmtrakVehicles(),
-      fetchMetrolinkTripUpdates()
+      fetchMetrolinkTripUpdates(),
+      fetchMetrolinkDelayAlerts()
     ]).then((results) => {
       const officialResult = results[0];
       const publicResult = results[1];
       const tripUpdatesResult = results[2];
+      const alertsResult = results[3];
       const errors = {};
       const officialVehicles = officialResult.status === 'fulfilled'
         ? officialResult.value.map((vehicle) => ({ ...vehicle, agency: 'metrolink' }))
         : [];
       const publicVehicles = publicResult.status === 'fulfilled' ? publicResult.value : [];
       const tripUpdates = tripUpdatesResult.status === 'fulfilled' ? tripUpdatesResult.value : [];
+      const delayAlerts = alertsResult.status === 'fulfilled' ? alertsResult.value : [];
 
       if (officialResult.status === 'rejected') errors.metrolink = officialResult.reason.message;
       if (publicResult.status === 'rejected') errors.public = publicResult.reason.message;
       if (tripUpdatesResult.status === 'rejected') errors.metrolinkTripUpdates = tripUpdatesResult.reason.message;
+      if (alertsResult.status === 'rejected') errors.metrolinkAlerts = alertsResult.reason.message;
 
       const publicMetrolinkVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'metrolink');
       const publicDelayByTrain = new Map();
@@ -259,11 +398,18 @@ async function getCachedMetrolinkVehicles() {
         ? []
         : publicMetrolinkVehicles;
       const amtrakVehicles = publicVehicles.filter((vehicle) => vehicle.agency === 'amtrak');
+      const vehicles = enrichedOfficialVehicles.concat(fallbackMetrolinkVehicles, amtrakVehicles).map((vehicle) => {
+        const alertReason = delayReasonFromAlerts(vehicle, delayAlerts);
+        return {
+          ...vehicle,
+          delayReason: alertReason || vehicle.delayReason || ''
+        };
+      });
 
       const value = {
         updatedAt: new Date().toISOString(),
         cacheSeconds: Math.round(metrolinkFeed.cacheMs / 1000),
-        vehicles: enrichedOfficialVehicles.concat(fallbackMetrolinkVehicles, amtrakVehicles),
+        vehicles,
         tripUpdates,
         source: officialVehicles.length ? 'api-key' : 'public-fallback',
         errors
