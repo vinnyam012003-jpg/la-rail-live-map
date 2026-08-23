@@ -1056,13 +1056,37 @@ function routeMatchesWhitelist(entry, routeWhitelist) {
     entry.line,
     entry.routeId
   ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  const allowMetroBrtRoutes = ['g', 'j', '901', '910', '950', 'orange line', 'silver line']
+    .some((value) => routeWhitelist.has(value));
   return values.some((value) => {
     if (routeWhitelist.has(value)) return true;
-    if (/^(901|910|950)(?:\b|-)/.test(value)) return true;
-    if (/\b(g|j)\s*line\b/.test(value)) return true;
-    if (value.includes('orange line') || value.includes('silver line')) return true;
+    if (allowMetroBrtRoutes && /^(901|910|950)(?:\b|-)/.test(value)) return true;
+    if (allowMetroBrtRoutes && /\b(g|j)\s*line\b/.test(value)) return true;
+    if (allowMetroBrtRoutes && (value.includes('orange line') || value.includes('silver line'))) return true;
     return false;
   });
+}
+
+function metroRailRouteWhitelistFromLines(lines) {
+  const map = {
+    a: ['a', '801'],
+    b: ['b', '802'],
+    c: ['c', '803'],
+    e: ['e', '804'],
+    d: ['d', '805'],
+    k: ['k', '807', '808']
+  };
+  const whitelist = new Set();
+  lines.forEach((line) => {
+    const key = String(line || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\bmetro\b/g, '')
+      .replace(/\bline\b/g, '')
+      .trim();
+    (map[key] || [key]).forEach((value) => whitelist.add(value));
+  });
+  return Array.from(whitelist);
 }
 
 function serviceDayPartsForNow(nowParts, startHour = 0) {
@@ -1165,6 +1189,7 @@ async function sendStationSchedule(requestUrl, response) {
     ...metroStopIds,
     ...splitQueryList(requestUrl.searchParams.get('metroRailStopIds'))
   ];
+  const metroRailLines = splitQueryList(requestUrl.searchParams.get('metroRailLines'));
   const metroBrtStopIds = splitQueryList(requestUrl.searchParams.get('metroBrtStopIds'));
   const metrolinkStopIds = splitQueryList(requestUrl.searchParams.get('metrolinkStopIds'));
   const names = splitQueryList(requestUrl.searchParams.get('names'));
@@ -1177,6 +1202,7 @@ async function sendStationSchedule(requestUrl, response) {
     try {
       const feed = await fetchStaticScheduleFeed('metro');
       metro = upcomingSchedulesForFeed(feed, metroRailStopIds, names, {
+        routeWhitelist: metroRailRouteWhitelistFromLines(metroRailLines),
         fullServiceDay: true,
         serviceDayStartHour: metroRailServiceDayStartHour,
         maxRows: 500
