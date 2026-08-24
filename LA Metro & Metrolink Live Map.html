@@ -252,7 +252,7 @@
     .train-marker.bus-marker { border-radius: 6px; }
     .train-marker.bus-marker.g-line { background: #e86a10; }
     .train-marker.bus-marker.j-line { background: #8a8a8a; }
-    .train-marker.bus-marker.local-bus-line { background: #1f6f4a; }
+    .train-marker.bus-marker.local-bus-line { background: #f28c28; }
     .train-marker.bus-marker svg { width: 17px; height: 17px; display: block; }
     .train-marker.subway-marker.b-line { background: #e52329; }
     .train-marker.subway-marker.d-line { background: #a05da5; }
@@ -598,7 +598,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.85';
+    const APP_VERSION = 'Beta 1.86';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -2136,9 +2136,9 @@
       const content = '<h2 id="sheetHeading" class="sheet-heading">Bus search</h2>' +
         '<button type="button" class="sheet-choice" data-bus-provider="metro">' +
           '<span class="sheet-choice-icon">' +
-            '<span class="train-hitbox"><span class="train-marker metro bus-marker local-bus-line">' +
-              '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="2" width="16" height="17" rx="3" fill="white"/><rect x="6" y="5" width="12" height="6" rx="1" fill="#333"/><rect x="6" y="13" width="3" height="2" rx="1" fill="#333"/><rect x="15" y="13" width="3" height="2" rx="1" fill="#333"/><circle cx="8" cy="20" r="2" fill="#333"/><circle cx="16" cy="20" r="2" fill="#333"/></svg>' +
-            '</span></span>' +
+            '<span class="station-sheet-icon" aria-hidden="true">' +
+              '<svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#20272d"/><path d="M10 36V12h8.5l5.5 14.8L29.5 12H38v24h-7V22.8L26.5 36h-5L17 22.8V36z" fill="white"/></svg>' +
+            '</span>' +
           '</span>' +
           '<span><span class="sheet-choice-title">Metro Bus</span>' +
           '<span class="sheet-choice-subtitle">Search up to 2 live Metro bus lines</span></span>' +
