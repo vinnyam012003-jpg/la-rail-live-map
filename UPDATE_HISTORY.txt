@@ -95,3 +95,5 @@ Beta 1.85 - Moved Metro bus live search behind a new magnifying-glass map button
 Beta 1.86 - Changed the Metro Bus search-menu provider icon to a circular Metro M and changed live Metro bus vehicle markers to Metro-orange.
 Beta 1.87 - Replaced the Metro Bus search-menu icon with a closer Metro-style circular block M logo.
 Beta 1.88 - Replaced the Metro Bus search-menu icon with the cropped transparent Metro logo PNG.
+Beta 1.89 - Reverted the Metro Bus search-menu icon to a crisp SVG Metro-style M and added the center gap/notch.
+Beta 1.90 - Replaced the Metro Bus search-menu icon with the provided Metro logo screenshot image as-is.
