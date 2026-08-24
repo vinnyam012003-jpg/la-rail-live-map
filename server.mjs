@@ -2088,7 +2088,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname === '/icon-192.png' || url.pathname === '/icon-180.png' || url.pathname === '/icon-32.png') {
+    if (url.pathname === '/icon-192.png' || url.pathname === '/icon-180.png' || url.pathname === '/icon-32.png' || url.pathname === '/metro-logo-original.png') {
       const icon = await readFile(join(root, url.pathname.slice(1)));
       response.writeHead(200, {
         'Content-Type': 'image/png',

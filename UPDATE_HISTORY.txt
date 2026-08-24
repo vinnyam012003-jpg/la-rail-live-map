@@ -97,3 +97,4 @@ Beta 1.87 - Replaced the Metro Bus search-menu icon with a closer Metro-style ci
 Beta 1.88 - Replaced the Metro Bus search-menu icon with the cropped transparent Metro logo PNG.
 Beta 1.89 - Reverted the Metro Bus search-menu icon to a crisp SVG Metro-style M and added the center gap/notch.
 Beta 1.90 - Replaced the Metro Bus search-menu icon with the provided Metro logo screenshot image as-is.
+Beta 1.91 - Updated the server to serve the Metro logo PNG asset used by the Metro Bus search-menu icon.
