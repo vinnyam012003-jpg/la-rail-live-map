@@ -133,6 +133,30 @@
       font-weight: 700;
     }
 
+    .bus-search-panel {
+      margin-top: 12px;
+      padding: 16px;
+      border: 1px solid #dfe2e5;
+      border-radius: 18px;
+      background: #f7f9fb;
+    }
+
+    .bus-search-provider {
+      margin: 0 0 10px;
+      color: #64717d;
+      font-size: 14px;
+    }
+
+    .bus-provider-disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .bus-provider-disabled .sheet-choice-chevron {
+      color: #aeb5bc;
+      font-size: 18px;
+    }
+
     body.dark-mode .map-title,
     body.dark-mode .live-status,
     body.dark-mode .version-badge,
@@ -158,6 +182,15 @@
 
     body.dark-mode .bus-filter-message.error {
       color: #ffb4b4;
+    }
+
+    body.dark-mode .bus-search-panel {
+      background: #1a222b;
+      border-color: #3a434e;
+    }
+
+    body.dark-mode .bus-search-provider {
+      color: #b7c4cf;
     }
 
     body.dark-mode .leaflet-control-zoom a {
@@ -565,7 +598,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.84';
+    const APP_VERSION = 'Beta 1.85';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -2043,6 +2076,17 @@
           '<path d="M0 -26.4 A26.4 26.4 0 0 1 0 26.4 Z" fill="#f8f9fa"/>' +
           '<path d="M0 -26.4 A26.4 26.4 0 0 0 0 26.4 Z" fill="#8c959e"/>' +
         '</svg>';
+      this.buttonSearch = L.DomUtil.create('button', 'map-mode-button bus-search-button', this.buttonStack);
+      this.buttonSearch.type = 'button';
+      this.buttonSearch.setAttribute('aria-label', 'Open bus search');
+      this.buttonSearch.setAttribute('aria-pressed', 'false');
+      this.buttonSearch.innerHTML =
+        '<svg viewBox="-40 -40 80 80" aria-hidden="true" focusable="false">' +
+          '<circle cx="0" cy="0" r="34" fill="#303841"/>' +
+          '<circle cx="-5" cy="-6" r="15" fill="none" stroke="#aeb5bc" stroke-width="5"/>' +
+          '<path d="M7 7 L22 22" stroke="#f8f9fa" stroke-width="6" stroke-linecap="round"/>' +
+          '<circle cx="-9" cy="-10" r="4" fill="#f8f9fa" opacity=".9"/>' +
+        '</svg>';
       this.button = L.DomUtil.create('button', 'developer-info-button', this.buttonStack);
       this.button.type = 'button';
       this.button.setAttribute('aria-label', 'Hide developer info');
@@ -2071,6 +2115,9 @@
         const nextDarkMode = !document.body.classList.contains('dark-mode');
         setDarkMode(nextDarkMode);
       });
+      L.DomEvent.on(this.buttonSearch, 'click', function () {
+        showBusSearchMenu();
+      });
       L.DomEvent.on(this.button, 'click', function () {
         const nextCollapsed = !statusControl.element.classList.contains('collapsed');
         statusControl.element.classList.toggle('collapsed', nextCollapsed);
@@ -2084,29 +2131,65 @@
     };
     modeControl.addTo(map);
 
-    const busFilterControl = L.control({ position: 'topleft' });
-    busFilterControl.onAdd = function () {
-      const container = L.DomUtil.create('div', 'bus-filter-control');
-      container.innerHTML =
-        '<div class="bus-filter-title">Metro bus lines</div>' +
-        '<div class="bus-filter-row">' +
-          '<input class="bus-filter-input" type="text" inputmode="text" placeholder="20, 720" aria-label="Metro bus routes">' +
-          '<button class="bus-filter-button" type="button">Show</button>' +
-          '<button class="bus-filter-button bus-filter-clear" type="button">Clear</button>' +
-        '</div>' +
-        '<div class="bus-filter-message">Choose up to 2 bus lines.</div>';
-      busFilterInput = container.querySelector('.bus-filter-input');
-      busFilterMessage = container.querySelector('.bus-filter-message');
-      L.DomEvent.disableClickPropagation(container);
-      L.DomEvent.disableScrollPropagation(container);
-      container.querySelector('.bus-filter-button:not(.bus-filter-clear)').addEventListener('click', applyBusFilter);
-      container.querySelector('.bus-filter-clear').addEventListener('click', clearBusFilter);
+    function showBusSearchMenu() {
+      const selectedText = Array.from(selectedBusRoutes).join(', ');
+      const content = '<h2 id="sheetHeading" class="sheet-heading">Bus search</h2>' +
+        '<button type="button" class="sheet-choice" data-bus-provider="metro">' +
+          '<span class="sheet-choice-icon">' +
+            '<span class="train-hitbox"><span class="train-marker metro bus-marker local-bus-line">' +
+              '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="2" width="16" height="17" rx="3" fill="white"/><rect x="6" y="5" width="12" height="6" rx="1" fill="#333"/><rect x="6" y="13" width="3" height="2" rx="1" fill="#333"/><rect x="15" y="13" width="3" height="2" rx="1" fill="#333"/><circle cx="8" cy="20" r="2" fill="#333"/><circle cx="16" cy="20" r="2" fill="#333"/></svg>' +
+            '</span></span>' +
+          '</span>' +
+          '<span><span class="sheet-choice-title">Metro Bus</span>' +
+          '<span class="sheet-choice-subtitle">Search up to 2 live Metro bus lines</span></span>' +
+          '<span class="sheet-choice-chevron" aria-hidden="true">&rsaquo;</span>' +
+        '</button>' +
+        '<button type="button" class="sheet-choice bus-provider-disabled" disabled>' +
+          '<span class="sheet-choice-icon">' + stationSheetIcon() + '</span>' +
+          '<span><span class="sheet-choice-title">Glendale Beeline</span>' +
+          '<span class="sheet-choice-subtitle">Coming later</span></span>' +
+          '<span class="sheet-choice-chevron" aria-hidden="true">Soon</span>' +
+        '</button>' +
+        '<button type="button" class="sheet-choice bus-provider-disabled" disabled>' +
+          '<span class="sheet-choice-icon">' + stationSheetIcon() + '</span>' +
+          '<span><span class="sheet-choice-title">Santa Clarita Bus</span>' +
+          '<span class="sheet-choice-subtitle">Coming later</span></span>' +
+          '<span class="sheet-choice-chevron" aria-hidden="true">Soon</span>' +
+        '</button>' +
+        '<button type="button" class="sheet-choice bus-provider-disabled" disabled>' +
+          '<span class="sheet-choice-icon">' + stationSheetIcon() + '</span>' +
+          '<span><span class="sheet-choice-title">Other bus agencies</span>' +
+          '<span class="sheet-choice-subtitle">More providers can be added here</span></span>' +
+          '<span class="sheet-choice-chevron" aria-hidden="true">Soon</span>' +
+        '</button>' +
+        '<div class="bus-search-panel" data-metro-bus-panel hidden>' +
+          '<div class="bus-filter-title">Metro bus lines</div>' +
+          '<div class="bus-search-provider">Examples: 20, 720. Showing bus locations only for now.</div>' +
+          '<div class="bus-filter-row">' +
+            '<input class="bus-filter-input" type="text" inputmode="text" value="' + escapeHtml(selectedText) + '" placeholder="20, 720" aria-label="Metro bus routes">' +
+            '<button class="bus-filter-button" type="button" data-apply-bus-filter>Show</button>' +
+            '<button class="bus-filter-button bus-filter-clear" type="button" data-clear-bus-filter>Clear</button>' +
+          '</div>' +
+          '<div class="bus-filter-message">' + escapeHtml(selectedBusRoutes.size ? 'Selected: ' + selectedText : 'Choose up to 2 bus lines.') + '</div>' +
+        '</div>';
+
+      openSheet(content);
+
+      const panel = sheetContent.querySelector('[data-metro-bus-panel]');
+      const providerButton = sheetContent.querySelector('[data-bus-provider="metro"]');
+      providerButton.addEventListener('click', function () {
+        panel.hidden = !panel.hidden;
+        if (!panel.hidden && busFilterInput) busFilterInput.focus();
+      });
+      busFilterInput = sheetContent.querySelector('.bus-filter-input');
+      busFilterMessage = sheetContent.querySelector('.bus-filter-message');
+      sheetContent.querySelector('[data-apply-bus-filter]').addEventListener('click', applyBusFilter);
+      sheetContent.querySelector('[data-clear-bus-filter]').addEventListener('click', clearBusFilter);
       busFilterInput.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') applyBusFilter();
       });
-      return container;
-    };
-    busFilterControl.addTo(map);
+      if (selectedBusRoutes.size) panel.hidden = false;
+    }
 
     function normalizeBusRouteInput(route) {
       return String(route || '').trim().replace(/\s+/g, '').toUpperCase();
