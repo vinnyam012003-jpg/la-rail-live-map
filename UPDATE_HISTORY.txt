@@ -94,3 +94,4 @@ Beta 1.84 - Added a conservative Metro bus live filter with two routes per viewe
 Beta 1.85 - Moved Metro bus live search behind a new magnifying-glass map button and added a bottom-sheet bus agency menu with future provider placeholders.
 Beta 1.86 - Changed the Metro Bus search-menu provider icon to a circular Metro M and changed live Metro bus vehicle markers to Metro-orange.
 Beta 1.87 - Replaced the Metro Bus search-menu icon with a closer Metro-style circular block M logo.
+Beta 1.88 - Replaced the Metro Bus search-menu icon with the cropped transparent Metro logo PNG.

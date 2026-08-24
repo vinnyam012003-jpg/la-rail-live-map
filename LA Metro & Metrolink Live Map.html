@@ -462,7 +462,8 @@
       color: #ffffff;
     }
 
-    .station-sheet-icon svg { width: 34px; height: 34px; display: block; }
+    .station-sheet-icon svg,
+    .station-sheet-icon img { width: 34px; height: 34px; display: block; object-fit: contain; }
 
     .sheet-choice-title {
       display: block;
@@ -598,7 +599,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    const APP_VERSION = 'Beta 1.87';
+    const APP_VERSION = 'Beta 1.88';
     const map = L.map('map').setView([34.05, -118.25], 10);
     const sheetBackdrop = document.getElementById('sheetBackdrop');
     const mapSheet = document.getElementById('mapSheet');
@@ -2137,7 +2138,7 @@
         '<button type="button" class="sheet-choice" data-bus-provider="metro">' +
           '<span class="sheet-choice-icon">' +
             '<span class="station-sheet-icon" aria-hidden="true">' +
-              '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="#202020"/><path d="M13 47V17h14l5 15.2L37 17h14v30H41V30.8L35.4 47h-6.8L23 30.8V47z" fill="white"/></svg>' +
+              '<img src="metro-logo-cropped-transparent.png" alt="Metro">' +
             '</span>' +
           '</span>' +
           '<span><span class="sheet-choice-title">Metro Bus</span>' +
