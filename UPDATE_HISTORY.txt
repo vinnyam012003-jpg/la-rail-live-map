@@ -100,3 +100,4 @@ Beta 1.90 - Replaced the Metro Bus search-menu icon with the provided Metro logo
 Beta 1.91 - Updated the server to serve the Metro logo PNG asset used by the Metro Bus search-menu icon.
 Beta 1.92 - Zoomed and cropped the Metro Bus search-menu logo so the Metro circle fills the menu icon better.
 Beta 1.93 - Added the layer menu with per-line visibility toggles, drew selected Metro bus route lines/stops, expanded Metro bus vehicle popups with destinations/upcoming stops, and added LA Metro API usage/max display to the dev status site.
+Beta 1.94 - Reworked Metro Bus route/stops loading to use a prebuilt lightweight JSON file so Render does not unzip and parse the full bus GTFS during live requests.

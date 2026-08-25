@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build:gj-schedule": "node scripts/build-metro-gj-schedule.mjs",
+    "build:metro-bus-routes": "node scripts/build-metro-bus-route-details.mjs",
     "start": "node server.mjs"
   },
   "dependencies": {
