@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: la-rail-live-map
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: METROLINK_API_KEY
+        sync: false
+      - key: LA_METRO_API_KEY
+        sync: false

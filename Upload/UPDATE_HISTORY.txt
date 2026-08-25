@@ -1,0 +1,102 @@
+LA Rail Live Map - update history
+
+Notes:
+- Beta 1.00 through Beta 1.47 are reconstructed fproject history before the visible version counter existed, so those early version numbers are approximate.
+- Beta 1.48 and newer follow the visible version counter rule used in the map.
+- Sensitive values such as API keys and passwords are intentionally not included here.
+
+Beta 1.00 - Started the standalone OpenStreetMap / Leaflet HTML map for LA Metro rail.
+Beta 1.01 - Loaded the user's LA Metro GeoJSON into the map.
+Beta 1.02 - Added LA Metro rail line styling using official-ish line colors.
+Beta 1.03 - Added station stop markers as white circles with gray outlines.
+Beta 1.04 - Added missing G Line and J Line stop markers.
+Beta 1.05 - Added first live vehicle tracking framework.
+Beta 1.06 - Added local server launcher concept so live feeds could be fetched through a server.
+Beta 1.07 - Added Metrolink rail lines to the same map.
+Beta 1.08 - Added separate Metrolink line colors so they stay visually distinct from Metro.
+Beta 1.09 - Added Metrolink station markers.
+Beta 1.10 - Combined shared station markers.
+Beta 1.11 - Changed shared stations to square markers.
+Beta 1.12 - Made Union Station a larger rectangle marker.
+Beta 1.13 - Enlarged Union Station and 7th Street / Metro Center markers.
+Beta 1.14 - Updated title box to LA Metro & Metrolink.
+Beta 1.15 - Began integrating Metro live vehicle feed behavior.
+Beta 1.16 - Began integrating Metrolink live vehicle feed behavior.
+Beta 1.17 - Added bus icons for Metro G Line and J Line vehicles.
+Beta 1.18 - Added subway-style icons for Metro B Line and D Line vehicles.
+Beta 1.19 - Added light rail vehicle icons with pantograph detail for Metro A/C/E/K lines.
+Beta 1.20 - Added separate Metrolink and Amtrak commuter train icons.
+Beta 1.21 - Revised commuter train icons to use a front-facing train shape.
+Beta 1.22 - Updated commuter icon colors: teal for Metrolink and navy blue for Amtrak.
+Beta 1.23 - Added clickable station arrival popups.
+Beta 1.24 - Added train popup destination display using final station names instead of east/west labels.
+Beta 1.25 - Added final-destination display support for Metrolink and Amtrak train popups.
+Beta 1.26 - Improved AV Line destination handling.
+Beta 1.27 - Added server-side Metrolink API key support.
+Beta 1.28 - Prepared project for hosted server deployment.
+Beta 1.29 - Added Render-compatible server setup.
+Beta 1.30 - Moved API key use toward server-side handling so site visitors cannot see keys.
+Beta 1.31 - Added GitHub upload/deploy workflow support.
+Beta 1.32 - Added popup next train arrival support by station direction.
+Beta 1.33 - Added train popup next station and time-until-next-station support for LA Metro.
+Beta 1.34 - Extended next station/time support toward commuter trains.
+Beta 1.35 - Added delay/status dot testing for commuter train icons.
+Beta 1.36 - Implemented commuter delay dot design.
+Beta 1.37 - Added custom favicon / tab icon concept.
+Beta 1.38 - Created four-quadrant app icon concept using G/B/A/Metrolink icon pieces.
+Beta 1.39 - Refined app icon track details and removed unwanted light rail dot artifacts.
+Beta 1.40 - Implemented final app/tab icon assets.
+Beta 1.41 - Improved live train destination fallback handling.
+Beta 1.42 - Added Metro API key support server-side.
+Beta 1.43 - Tuned Metro API call timing for the 180 requests / 15 minutes limit.
+Beta 1.44 - Made Metrolink feed server-side and cached for all viewers.
+Beta 1.45 - Set Metrolink/Amtrak refresh behavior around a safer 30-second cache.
+Beta 1.46 - Added overlapping Metro rail shared-segment visual experiments.
+Beta 1.47 - Added station schedule concept using static GTFS data.
+
+Beta 1.48 - Added visible version counter in the bottom corner and reset the counter to Beta 1.48.
+Beta 1.49 - Adjusted popup layout: destination spacing, scheduled times as clock times, and destination subtitles in multi-choice sheets.
+Beta 1.50 - Sorted scheduled station times by destination and added upcoming stop lists to train popups.
+Beta 1.51 - Improved bottom-sheet scrolling and spacing so text is less likely to be cut off.
+Beta 1.52 - Added track/platform display for Metrolink and Amtrak station/train schedule rows.
+Beta 1.53 - Fixed additional bottom-sheet cut-off issues and moved version counter to the bottom right.
+Beta 1.54 - Added G/J scheduled-time support and restored correct D Line dashed/solid behavior.
+Beta 1.55 - Reverted station schedules back to a 6-hour window for all station schedule displays.
+Beta 1.56 - Reduced schedule memory/load behavior after Render memory issues.
+Beta 1.57 - Added support files for generated/prebuilt Metro G/J schedules.
+Beta 1.58 - Added commuter train delay reason display using alert/status information.
+Beta 1.59 - Combined duplicate delay/status presentation into a cleaner Delay section.
+Beta 1.60 - Pulled richer Metrolink alert text for train delay reasons.
+Beta 1.61 - Showed multiple commuter train alerts instead of only one.
+Beta 1.62 - Added commuter train alerts to station popups and line maintenance labeling.
+Beta 1.63 - Added station marker alert behavior for line-wide alerts and delayed incoming trains.
+Beta 1.64 - Fixed station alert marker behavior so red station markers better match relevant commuter alerts.
+Beta 1.65 - Adjusted delayed-train alert logic so train dots and station dots are used for the correct alert type.
+Beta 1.66 - Improved red station marker logic for delayed incoming commuter trains.
+Beta 1.67 - Reorganized project output workflow with an Upload folder for GitHub-ready files.
+Beta 1.68 - Added developer info button concept and tested grayscale Di icon designs.
+Beta 1.69 - Implemented developer info button and hide/show behavior for the bottom-left info box.
+Beta 1.70 - Fixed E Line destination naming for Downtown Santa Monica direction cases.
+Beta 1.71 - Added dark mode toggle button.
+Beta 1.72 - Added satellite mode toggle button and satellite icon.
+Beta 1.73 - Adjusted mode button placement to start below zoom controls.
+Beta 1.74 - Refined Di button sizing and icon alignment.
+Beta 1.75 - Updated dark mode map tiles and dark mode popup styling.
+Beta 1.76 - Applied overlap handling to C/K shared segment and placed J Line layer under other lines.
+Beta 1.77 - Fixed C/K shared segment gap and kept C Line on the east side of the shared portion.
+Beta 1.78 - Marked as a safe rollback version after restoring stable map geometry.
+Beta 1.79 - Fixed Expo / Crenshaw Station schedule filtering so it does not show C Line service incorrectly.
+Beta 1.80 - Added private /dev-status page with password-protected server telemetry.
+Beta 1.81 - Switched satellite labels to CARTO label-only tiles to remove white city dots and county boundary lines.
+Beta 1.82 - Added persistent 24-hour viewer telemetry storage support using a server-side JSON file / Render disk path.
+Beta 1.83 - Fixed station-arrival row layout so track numbers align consistently in the bottom-sheet popup.
+Beta 1.84 - Added a conservative Metro bus live filter with two routes per viewer, server-wide bus route/vehicle caps, and cached server-side feed filtering.
+Beta 1.85 - Moved Metro bus live search behind a new magnifying-glass map button and added a bottom-sheet bus agency menu with future provider placeholders.
+Beta 1.86 - Changed the Metro Bus search-menu provider icon to a circular Metro M and changed live Metro bus vehicle markers to Metro-orange.
+Beta 1.87 - Replaced the Metro Bus search-menu icon with a closer Metro-style circular block M logo.
+Beta 1.88 - Replaced the Metro Bus search-menu icon with the cropped transparent Metro logo PNG.
+Beta 1.89 - Reverted the Metro Bus search-menu icon to a crisp SVG Metro-style M and added the center gap/notch.
+Beta 1.90 - Replaced the Metro Bus search-menu icon with the provided Metro logo screenshot image as-is.
+Beta 1.91 - Updated the server to serve the Metro logo PNG asset used by the Metro Bus search-menu icon.
+Beta 1.92 - Zoomed and cropped the Metro Bus search-menu logo so the Metro circle fills the menu icon better.
+Beta 1.93 - Added the layer menu with per-line visibility toggles, drew selected Metro bus route lines/stops, expanded Metro bus vehicle popups with destinations/upcoming stops, and added LA Metro API usage/max display to the dev status site.
