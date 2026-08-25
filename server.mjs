@@ -40,6 +40,7 @@ const metroFeeds = {
     cacheMs: 70000
   }
 };
+const laMetroApiLimit15m = Number(process.env.LA_METRO_API_LIMIT_15M || 180);
 const metroCache = {
   vehicles: { fetchedAt: 0, value: null, pending: null },
   tripUpdates: { fetchedAt: 0, value: null, pending: null }
@@ -51,6 +52,12 @@ const staticScheduleFeeds = {
     url: 'https://gitlab.com/LACMTA/gtfs_rail/-/raw/master/gtfs_rail.zip',
     cacheMs: 6 * 60 * 60 * 1000
   },
+  metroBus: {
+    agency: 'metroBus',
+    label: 'LA Metro Bus',
+    url: process.env.METRO_BUS_GTFS_URL || 'https://gitlab.com/LACMTA/gtfs_bus/-/raw/master/gtfs_bus.zip',
+    cacheMs: 6 * 60 * 60 * 1000
+  },
   metrolink: {
     agency: 'metrolink',
     label: 'Metrolink',
@@ -60,6 +67,7 @@ const staticScheduleFeeds = {
 };
 const staticScheduleCache = {
   metro: { fetchedAt: 0, value: null, pending: null },
+  metroBus: { fetchedAt: 0, value: null, pending: null },
   metrolink: { fetchedAt: 0, value: null, pending: null }
 };
 const metroGjSchedulePath = join(root, 'data', 'metro-gj-schedule.json');
@@ -1692,6 +1700,197 @@ async function sendMetroBusVehicles(request, response, requestUrl) {
   }
 }
 
+function stopTimeSequenceValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 999999;
+}
+
+function simplifyShapePoints(points, maxPoints = 900) {
+  if (!Array.isArray(points) || points.length <= maxPoints) return points || [];
+  const step = Math.ceil(points.length / maxPoints);
+  const simplified = points.filter((_, index) => index % step === 0);
+  const last = points[points.length - 1];
+  const simplifiedLast = simplified[simplified.length - 1];
+  if (last && simplifiedLast && (last.lat !== simplifiedLast.lat || last.lon !== simplifiedLast.lon)) simplified.push(last);
+  return simplified;
+}
+
+function normalizeBusRouteKey(value) {
+  return String(value || '').trim().replace(/\s+/g, '').toUpperCase();
+}
+
+async function buildMetroBusRouteDetails(routeList) {
+  const requestedRoutes = Array.from(new Set((routeList || []).map(normalizeBusRouteKey).filter(Boolean)));
+  const cache = staticScheduleCache.metroBus;
+  const now = Date.now();
+  if (!cache.value || now - cache.fetchedAt >= staticScheduleFeeds.metroBus.cacheMs) {
+    cache.value = { routes: new Map() };
+    cache.fetchedAt = now;
+  }
+
+  const missingRoutes = requestedRoutes.filter((route) => !cache.value.routes.has(route));
+  if (missingRoutes.length) {
+    const response = await fetch(staticScheduleFeeds.metroBus.url, { signal: AbortSignal.timeout(45000) });
+    if (!response.ok) throw new Error(`LA Metro Bus static GTFS returned HTTP ${response.status}`);
+    const entries = extractZipEntries(Buffer.from(await response.arrayBuffer()), [
+      'routes.txt',
+      'trips.txt',
+      'stop_times.txt',
+      'stops.txt',
+      'shapes.txt'
+    ]);
+
+    const wanted = new Set(missingRoutes);
+    const selectedRouteIds = new Set();
+    const routeInfoById = new Map();
+    forEachCsvRecord(entries['routes.txt'], (route) => {
+      const shortName = route.route_short_name || route.route_id;
+      const keys = [route.route_id, shortName, route.route_long_name].map(normalizeBusRouteKey);
+      if (!keys.some((key) => wanted.has(key))) return;
+      selectedRouteIds.add(route.route_id);
+      routeInfoById.set(route.route_id, {
+        id: route.route_id,
+        shortName,
+        longName: route.route_long_name || shortName
+      });
+    });
+
+    const selectedTrips = new Map();
+    const routeShapeIds = new Map();
+    forEachCsvRecord(entries['trips.txt'], (trip) => {
+      if (!selectedRouteIds.has(trip.route_id)) return;
+      selectedTrips.set(trip.trip_id, {
+        routeId: trip.route_id,
+        directionId: trip.direction_id || '',
+        headsign: trip.trip_headsign || '',
+        shapeId: trip.shape_id || ''
+      });
+      if (trip.shape_id) {
+        if (!routeShapeIds.has(trip.route_id)) routeShapeIds.set(trip.route_id, new Set());
+        routeShapeIds.get(trip.route_id).add(trip.shape_id);
+      }
+    });
+
+    const stopIdsByRoute = new Map();
+    const stopOrderByRoute = new Map();
+    forEachCsvRecord(entries['stop_times.txt'], (stopTime) => {
+      const trip = selectedTrips.get(stopTime.trip_id);
+      if (!trip) return;
+      if (!stopIdsByRoute.has(trip.routeId)) stopIdsByRoute.set(trip.routeId, new Set());
+      stopIdsByRoute.get(trip.routeId).add(stopTime.stop_id);
+      const orderKey = `${trip.routeId}:${trip.directionId || '0'}`;
+      if (!stopOrderByRoute.has(orderKey)) stopOrderByRoute.set(orderKey, []);
+      stopOrderByRoute.get(orderKey).push({
+        stopId: stopTime.stop_id,
+        sequence: stopTimeSequenceValue(stopTime.stop_sequence),
+        headsign: stopTime.stop_headsign || trip.headsign || ''
+      });
+    });
+
+    const stopsById = new Map();
+    forEachCsvRecord(entries['stops.txt'], (stop) => {
+      const lat = Number(stop.stop_lat);
+      const lon = Number(stop.stop_lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+      stopsById.set(stop.stop_id, {
+        id: stop.stop_id,
+        name: stop.stop_name || stop.stop_id,
+        lat,
+        lon
+      });
+    });
+
+    const allShapeIds = new Set();
+    routeShapeIds.forEach((ids) => ids.forEach((id) => allShapeIds.add(id)));
+    const pointsByShape = new Map();
+    forEachCsvRecord(entries['shapes.txt'], (shape) => {
+      if (!allShapeIds.has(shape.shape_id)) return;
+      const lat = Number(shape.shape_pt_lat);
+      const lon = Number(shape.shape_pt_lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+      if (!pointsByShape.has(shape.shape_id)) pointsByShape.set(shape.shape_id, []);
+      pointsByShape.get(shape.shape_id).push({
+        lat,
+        lon,
+        sequence: stopTimeSequenceValue(shape.shape_pt_sequence)
+      });
+    });
+
+    routeInfoById.forEach((routeInfo, routeId) => {
+      const shapes = Array.from(routeShapeIds.get(routeId) || [])
+        .map((shapeId) => {
+          const points = (pointsByShape.get(shapeId) || [])
+            .sort((first, second) => first.sequence - second.sequence)
+            .map((point) => [point.lat, point.lon]);
+          return { shapeId, points: simplifyShapePoints(points) };
+        })
+        .filter((shape) => shape.points.length > 1)
+        .sort((first, second) => second.points.length - first.points.length)
+        .slice(0, 4);
+
+      const orderedStopIds = [];
+      Array.from(stopOrderByRoute.entries())
+        .filter(([key]) => key.startsWith(routeId + ':'))
+        .forEach(([, rows]) => {
+          rows.sort((first, second) => first.sequence - second.sequence).forEach((row) => {
+            if (!orderedStopIds.includes(row.stopId)) orderedStopIds.push(row.stopId);
+          });
+        });
+      Array.from(stopIdsByRoute.get(routeId) || []).forEach((stopId) => {
+        if (!orderedStopIds.includes(stopId)) orderedStopIds.push(stopId);
+      });
+
+      const stops = orderedStopIds
+        .map((stopId) => stopsById.get(stopId))
+        .filter(Boolean);
+
+      cache.value.routes.set(normalizeBusRouteKey(routeInfo.shortName), {
+        routeId,
+        shortName: routeInfo.shortName,
+        longName: routeInfo.longName,
+        shapes,
+        stops
+      });
+    });
+
+    missingRoutes.forEach((route) => {
+      if (!cache.value.routes.has(route)) cache.value.routes.set(route, null);
+    });
+  }
+
+  return requestedRoutes.map((route) => cache.value.routes.get(route)).filter(Boolean);
+}
+
+async function sendMetroBusRouteDetails(requestUrl, response) {
+  try {
+    const routes = parseBusRouteList(requestUrl.searchParams.get('routes'));
+    if (!routes.length) {
+      sendJson(response, 200, { routes: [], updatedAt: new Date().toISOString() });
+      return;
+    }
+    if (routes.length > busLimits.maxRoutesPerViewer) {
+      sendJson(response, 400, {
+        routes: [],
+        errors: { bus: `Choose up to ${busLimits.maxRoutesPerViewer} bus lines at a time.` }
+      });
+      return;
+    }
+    const details = await buildMetroBusRouteDetails(routes);
+    sendJson(response, 200, {
+      updatedAt: new Date().toISOString(),
+      routes: details,
+      source: 'LA Metro Bus static GTFS'
+    });
+  } catch (error) {
+    addAppLog('feed-error', `metro bus route details: ${error.message}`);
+    sendJson(response, 503, {
+      updatedAt: new Date().toISOString(),
+      routes: [],
+      errors: { bus: error.message }
+    });
+  }
+}
+
 async function sendMetroTripUpdates(response) {
   try {
     const payload = await getCachedMetroFeed('tripUpdates', parseMetroTripUpdates);
@@ -1860,6 +2059,10 @@ function telemetrySnapshot() {
     recentRequests: recentRequests.length,
     endpointRows,
     metroApiCalls15m: telemetry.metroApiCalls.length,
+    metroApiLimit15m: laMetroApiLimit15m,
+    metroApiUsagePercent15m: laMetroApiLimit15m > 0
+      ? Math.round((telemetry.metroApiCalls.length / laMetroApiLimit15m) * 100)
+      : 0,
     metrolinkLiveFetches: telemetry.metrolinkLiveFetches,
     metrolinkCacheHits: telemetry.metrolinkCacheHits,
     vehicleCounts: telemetry.vehicleCounts,
@@ -1870,6 +2073,7 @@ function telemetrySnapshot() {
       ['Metro trip updates', cacheAgeFor(metroCache.tripUpdates)],
       ['Metrolink vehicles', cacheAgeFor(metrolinkCache)],
       ['Metro rail GTFS', cacheAgeFor(staticScheduleCache.metro)],
+      ['Metro Bus GTFS', cacheAgeFor(staticScheduleCache.metroBus)],
       ['Metrolink GTFS', cacheAgeFor(staticScheduleCache.metrolink)],
       ['Metro G/J schedule', cacheAgeFor(prebuiltScheduleCache.metroGj)]
     ],
@@ -1934,7 +2138,7 @@ function sendDevStatusPage(response) {
     <div class="card"><div class="muted">Active viewers</div><div class="big">${data.activeViewers}</div><div class="muted">Approx. active in last 2 min</div></div>
     <div class="card"><div class="muted">Unique viewers</div><div class="big">${data.uniqueViewers24h}</div><div class="muted">15m: ${data.uniqueViewers15m} · 1h: ${data.uniqueViewers1h} · 24h: ${data.uniqueViewers24h}</div></div>
     <div class="card"><div class="muted">Viewer history storage</div><div class="big">File</div><div class="muted">${htmlEscape(data.telemetryStorage)}</div></div>
-    <div class="card"><div class="muted">Metro API calls</div><div class="big">${data.metroApiCalls15m}</div><div class="muted">Last 15 minutes</div></div>
+    <div class="card"><div class="muted">LA Metro API calls</div><div class="big">${data.metroApiCalls15m}/${data.metroApiLimit15m}</div><div class="muted">Last 15 minutes · ${data.metroApiUsagePercent15m}% used</div></div>
     <div class="card"><div class="muted">Metrolink feed</div><div class="big">${data.metrolinkLiveFetches}</div><div class="muted">Live fetches · ${data.metrolinkCacheHits} cache hits</div></div>
   </section>
 
@@ -2055,6 +2259,11 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === '/api/metro/bus/vehicles') {
       await sendMetroBusVehicles(request, response, url);
+      return;
+    }
+
+    if (url.pathname === '/api/metro/bus/routes') {
+      await sendMetroBusRouteDetails(url, response);
       return;
     }
 
